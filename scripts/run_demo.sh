@@ -7,6 +7,11 @@ if [[ ! -d dashboard/node_modules ]]; then
   echo "[run_demo] installing dashboard deps (first run)…"
   ( cd dashboard && npm install --silent )
 fi
+# Stage the demo PDF for the dashboard's "Load demo SOC 2" button.
+if [[ ! -f dashboard/public/sample-soc2.pdf && -f examples/soc2_excerpt.pdf ]]; then
+  echo "[run_demo] staging examples/soc2_excerpt.pdf → dashboard/public/sample-soc2.pdf"
+  cp examples/soc2_excerpt.pdf dashboard/public/sample-soc2.pdf
+fi
 if [[ ! -x ./bin/lobstertrap ]]; then
   echo "[run_demo] lobstertrap binary missing — running download script first"
   ./scripts/download_lobstertrap.sh

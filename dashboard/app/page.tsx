@@ -152,8 +152,37 @@ export default function Page() {
           </div>
           <label className="block border-2 border-dashed border-slate-700 rounded p-8 text-center text-slate-400 cursor-pointer hover:border-slate-500">
             Drag a SOC 2 / OWASP / EU AI Act PDF or .md here, or click to choose
-            <input type="file" className="hidden" onChange={onPickFile} accept=".pdf,.md,.txt" />
+            <input
+              type="file"
+              data-testid="upload-input"
+              className="hidden"
+              onChange={onPickFile}
+              accept=".pdf,.md,.txt"
+            />
           </label>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-2 w-full"
+            data-testid="load-demo-soc2"
+            onClick={async () => {
+              try {
+                const r = await fetch("/sample-soc2.pdf");
+                if (!r.ok) {
+                  alert("sample-soc2.pdf missing in dashboard/public/. Run: ./scripts/copy_demo_pdf.sh");
+                  return;
+                }
+                const blob = await r.blob();
+                const file = new File([blob], "soc2_excerpt.pdf", { type: "application/pdf" });
+                const { job_id } = await uploadPolicy(file);
+                dispatch({ type: "set_job", jobId: job_id });
+              } catch (e) {
+                alert(`Demo load failed: ${e}`);
+              }
+            }}
+          >
+            🚀 Load demo SOC 2 PDF
+          </Button>
           <div className="mt-3 text-sm space-y-1">
             <div>
               Reader: <Badge variant="secondary">{state.reader.status}</Badge>{" "}
