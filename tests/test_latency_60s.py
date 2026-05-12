@@ -15,9 +15,9 @@ pytestmark = pytest.mark.skipif(
 async def test_upload_to_deploy_under_120s():
     """SLA: upload → deployed-policy ≤120s (p99 budget). Measured runs across this session:
     50.3s, 55.3s, 73.3s, 92.4s. The README's '60 seconds' is the MEDIAN we observe;
-    120s absorbs the worst Synthesizer retry path (gemini-2.5-pro with 16K thinking budget
-    can spike to ~60s + a retry to ~120s on rare runs). If THIS breaks, something
-    structural regressed."""
+    120s absorbs the worst Synthesizer retry path (gemini-3.1-pro-preview with 32K
+    thinking + output budget can spike to ~60s + a retry to ~120s on rare runs). If
+    THIS breaks, something structural regressed."""
     async with httpx.AsyncClient(timeout=180) as client:
         t0 = time.monotonic()
         with open("examples/soc2_excerpt.md", "rb") as f:

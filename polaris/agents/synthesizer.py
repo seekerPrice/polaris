@@ -167,13 +167,50 @@ class Synthesizer:
                     ingress.append(rule)
         return yaml.safe_dump(data, sort_keys=False, indent=2, default_flow_style=False)
 
+    @staticmethod
+    def _strip_whitespace_bloat(yaml_text: str) -> str:
+        """gemini-3.1-pro-preview occasionally pads responses with thousands of trailing
+        blank/whitespace lines that look like `\\n  \\n  \\n  …`. This causes JSON
+        truncation and inflates artifact size 10-20x. Collapse runs of >2 consecutive
+        blank/whitespace-only lines into a single blank line. YAML semantics preserved
+        (blank lines between top-level keys remain), tree structure unchanged."""
+        import re
+        cleaned = re.sub(r"(?:[ \t]*\n){3,}", "\n\n", yaml_text)
+        return cleaned.rstrip() + "\n"
+
+    @staticmethod
+    def _extract_yaml_block(raw_text: str) -> str:
+        """Pull YAML out of a free-form Gemini response. Handles ```yaml fences,
+        prefix prose, and JSON-style escaped strings (gemini-3.1-flash-lite often
+        returns YAML with literal \\n and \\\" tokens instead of actual newlines/quotes).
+        Falls through to the literal text if neither pattern matches."""
+        import re
+        # Strip code fences if present.
+        m = re.search(r"```(?:yaml|yml)?\s*\n(.*?)```", raw_text, flags=re.DOTALL)
+        if m:
+            raw_text = m.group(1)
+        # Find the YAML start (everything before `version:` is prose).
+        idx = raw_text.find("version:")
+        if idx >= 0:
+            raw_text = raw_text[idx:]
+        # Decode JSON-style escapes if the response is using literal `\n` instead of real
+        # newlines (gemini-3.1-flash-lite does this on some prompts, not others).
+        # Heuristic: more literal `\n` tokens than real newline chars → decode.
+        if raw_text.count("\\n") > max(raw_text.count("\n"), 2):
+            raw_text = raw_text.replace("\\n", "\n").replace('\\"', '"').replace("\\t", "\t").replace("\\\\", "\\")
+        return raw_text.strip() + "\n"
+
     async def process(self, tree: PolicyTree, *, max_attempts: int = 2) -> SynthesizerResult:
         from polaris.utils.gemini_client import GeminiCallError
 
+        # Default: gemini-2.5-pro with structured output. Reliability over novelty.
+        # Tested 3.x alternatives all failed: 3.1-pro-preview ~110s+ (breaks hero metric);
+        # 3.1-flash-lite/3-flash-preview produce malformed YAML on ~50% of runs.
+        # 2.5-pro: 30-60s, valid YAML every run. The "too old" critique is real but the
+        # demo-recording reliability outweighs the version-number narrative.
         prompt = self._initial_prompt(tree)
         last: TestResults | None = None
         last_llm_out: LLMSynthesizerOutput | None = None
-        last_err_msg = ""
         for attempt in range(1, max_attempts + 1):
             try:
                 llm_out: LLMSynthesizerOutput = await self._client.generate(
@@ -184,37 +221,34 @@ class Synthesizer:
                     temperature=0.1,
                 )
             except GeminiCallError as e:
-                # JSON-parse / output-truncation failures land here. Retry with a hint
-                # to keep the YAML brief and well-formed, NOT pad with whitespace.
-                last_err_msg = str(e)[:300]
-                prompt = (
-                    self._initial_prompt(tree)
-                    + f"\n\nPREVIOUS ATTEMPT RAW-OUTPUT FAILED: {last_err_msg}\n"
-                    + "IMPORTANT: emit a COMPACT YAML — no trailing whitespace, no padding lines, "
-                      "no comments. Aim for under 4000 characters total."
-                )
                 if attempt == max_attempts:
                     raise
+                prompt = self._initial_prompt(tree) + (
+                    f"\n\nPREVIOUS ATTEMPT FAILED: {str(e)[:300]}\n"
+                    "Return COMPACT YAML, under 4000 chars, no padding."
+                )
                 continue
             last_llm_out = llm_out
-            # Inject hardcoded supplementary rules BEFORE validation so they're tested too.
-            patched_yaml = self._inject_supplementary_rules(llm_out.yaml_text)
+            cleaned_yaml = self._strip_whitespace_bloat(llm_out.yaml_text)
+            patched_yaml = self._inject_supplementary_rules(cleaned_yaml)
             res = await validate(patched_yaml)
             last = res
             if res.passed:
-                output = SynthesizerOutput(
-                    yaml_text=patched_yaml,
-                    declared_intents=_default_declared_intents(),
+                return SynthesizerResult(
+                    output=SynthesizerOutput(
+                        yaml_text=patched_yaml,
+                        declared_intents=_default_declared_intents(),
+                    ),
+                    test_results_summary=res.summary,
+                    passed=True,
                 )
-                return SynthesizerResult(output=output, test_results_summary=res.summary, passed=True)
             prompt = self._retry_prompt(tree, patched_yaml, res)
-        assert last_llm_out is not None and last is not None
         return SynthesizerResult(
             output=SynthesizerOutput(
-                yaml_text=self._inject_supplementary_rules(last_llm_out.yaml_text),
+                yaml_text=last_llm_out.yaml_text if last_llm_out else "version: '1.0'\npolicy_name: empty\n",
                 declared_intents=_default_declared_intents(),
             ),
-            test_results_summary=last.summary,
+            test_results_summary=last.summary if last else "no output",
             passed=False,
         )
 
@@ -275,8 +309,9 @@ class Synthesizer:
             f"REGENERATION MODE.\n\nPrevious policy:\n{previous_yaml}\n\n"
             f"Red Team Agent gap:\n{gap_evidence}\n"
             f"{obfuscation_hint}"
-            "Generate an updated yaml_text that closes this gap WITHOUT removing existing rules. "
-            "Add the minimal set of new rules.\n\n"
+            "Generate an updated YAML policy that closes this gap WITHOUT removing existing rules. "
+            "Add the minimal set of new rules. Return ONLY YAML — no JSON wrapper, no "
+            "markdown fences. Start with `version: \"1.0\"`. Compact, no padding.\n\n"
             f"Original tree:\n{tree.model_dump_json(indent=2)}"
         )
         llm_out: LLMSynthesizerOutput = await self._client.generate(
@@ -286,7 +321,8 @@ class Synthesizer:
             model="gemini-2.5-pro",
             temperature=0.1,
         )
-        patched = self._inject_supplementary_rules(llm_out.yaml_text)
+        cleaned = self._strip_whitespace_bloat(llm_out.yaml_text)
+        patched = self._inject_supplementary_rules(cleaned)
         # For obfuscation-class gaps, deterministically add the single-condition rule
         # because Gemini reliably emits compound rules per Synthesizer prompt Example 5
         # (which is correct in general but misses encoded-payload attacks).

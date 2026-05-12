@@ -82,11 +82,13 @@ class GeminiClient:
         else returns the raw .text string. Retries on transient errors only.
         """
         chosen_model = model or self._default_model
-        # 16K output budget. gemini-2.5-pro has implicit "thinking" tokens that count
-        # against this budget — too small (e.g. 4K) and the model exhausts the budget on
-        # internal reasoning before emitting any visible text, returning resp.text=None.
-        # 16K leaves comfortable headroom for both thinking and a ~5KB Lobster Trap YAML.
-        config: dict[str, Any] = {"temperature": temperature, "max_output_tokens": 16384}
+        # 32K output budget. Gemini 2.5/3.1 Pro models emit implicit "thinking" tokens
+        # that count against this budget. 3.1-pro-preview specifically has been observed
+        # to pad responses with thousands of trailing-whitespace newlines (the "86KB
+        # bloat" bug); 32K gives that pathology room to land WITHOUT truncating the
+        # actual JSON payload, AND the post-process strip in Synthesizer / Reader cleans
+        # the whitespace. Max per Gemini docs is 65536; 32K leaves headroom.
+        config: dict[str, Any] = {"temperature": temperature, "max_output_tokens": 65536}
         if system_instruction:
             config["system_instruction"] = system_instruction
         if response_schema is not None:

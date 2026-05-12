@@ -48,7 +48,7 @@ class RedTeam:
     def _ensure_client(self) -> GeminiClient:
         if self._client is None:
             from polaris.utils.gemini_client import get_client
-            self._client = get_client("gemini-2.5-pro")
+            self._client = get_client("gemini-3.1-pro-preview")
         return self._client
 
     async def generate_batch(
@@ -65,7 +65,7 @@ class RedTeam:
             prompt=prompt,
             system_instruction=self._system_prompt,
             response_schema=ProbeBatch,
-            model="gemini-2.5-pro",
+            model="gemini-3.1-pro-preview",
             temperature=0.2,
         )
         return batch.probes

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Warm Gemini's response cache for the Synthesizer prompt before recording the demo.
 # Per Phase 6.2 determinism pass — running the validation-gate spike 3× exercises
-# gemini-2.5-pro on the stripped synthesizer_agent.md prompt (the same code path
+# gemini-3.1-pro-preview on the stripped synthesizer_agent.md prompt (the same code path
 # Synthesizer.process uses), without re-deploying Lobster Trap each time.
 set -uo pipefail
 for i in 1 2 3; do
