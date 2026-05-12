@@ -196,13 +196,24 @@ These are non-negotiable. Violations slow demo day.
 
 Track current phase in this section. Update it as you complete each day.
 
-- [ ] **Day 1 (May 12) — Foundation:** repo scaffold, Lobster Trap downloaded and running, Gemini auth working, landing page stub, README hero metric copy locked.
-- [ ] **Day 2 (May 13) — Reader Agent:** PDF ingestion, Reader prompt working on 3 demo docs, structured policy tree output validated.
-- [ ] **Day 3 (May 14) — Synthesizer Agent:** YAML generation working, `lobstertrap test` validation gate functioning, declared_intent schema also generated.
-- [ ] **Day 4 (May 15) — Integration + Demo Agent:** end-to-end flow: PDF → Lobster Trap loaded → demo agent making real Gemini calls through Lobster Trap. Audit log persisted.
-- [ ] **Day 5 (May 16) — Red Team + Dashboard:** Red Team agent finding gaps, dashboard real-time UI working, compliance PDF generation working. **Record demo by end of day.**
+- [x] **Day 1 (May 12) — Foundation:** repo scaffold, Lobster Trap downloaded and running, Gemini auth working, landing page stub, README hero metric copy locked. ✅ Done — Go 1.26.3 installed, `bin/lobstertrap version` v0.1.0, `lobstertrap test` 11/11 PASS on upstream default; centralised `polaris/utils/gemini_client.py` with retries + JSON-mode (3 unit tests PASS); Next.js 16 dashboard scaffold renders the hero metric line.
+- [x] **Day 2 (May 13) — Reader Agent:** PDF ingestion, Reader prompt working on 3 demo docs, structured policy tree output validated. ✅ Code complete — Pydantic Requirement+PolicyTree with strict lobster_trap_fields validator; PDF extractor with header/footer strip; 3 example docs (SOC 2 CC6.x + EU AI Act Art 14/15 + OWASP LLM Top 10) + soc2_excerpt.pdf rendered. Live Reader e2e gated by GEMINI_API_KEY.
+- [x] **Day 3 (May 14) — Synthesizer Agent:** YAML generation working, `lobstertrap test` validation gate functioning, declared_intent schema also generated. ✅ Code complete — full Lobster Trap schema (8 actions/8 match types/22 fields), 3-layer validator (yaml→Pydantic→`lobstertrap test` w/ TimeoutExpired handling), Synthesizer with Example-5-stripping for initial pass + remediation-hint retry prompt. Live Synthesizer e2e gated by GEMINI_API_KEY.
+- [x] **Day 4 (May 15) — Integration + Demo Agent:** end-to-end flow: PDF → Lobster Trap loaded → demo agent making real Gemini calls through Lobster Trap. Audit log persisted. ✅ Code complete — LobsterTrap client (generation counter prevents tail-task leaks, inode-change file rotation), Gemini→OAI shim on :11434 (lazy client), aiosqlite persistence, FastAPI lifespan handler + SSE (drops `event:` line so EventSource.onmessage fires), Sales Ops Copilot with `_lobstertrap` declared-intent block, naturalistic indirect injection in customer_feedback_today.txt. Live e2e block gated by GEMINI_API_KEY.
+- [x] **Day 5 (May 16) — Red Team + Dashboard:** Red Team agent finding gaps, dashboard real-time UI working, compliance PDF generation working. **Record demo by end of day.** ✅ Code complete — RedTeam with deterministic 3-probe demo_sequence (indirect inj DENY → base64 GAP → base64-after-patch DENY), regenerate-and-hot-reload loop in routes.py, reportlab compliance PDF, 4-panel dashboard with line-by-line YAML animation + rich metadata display. Dashboard `npm run build` PASS. Recording requires GEMINI_API_KEY + human hands.
 - [ ] **Day 6 (May 17) — Polish:** three demo recording takes, pitch deck, README finalized, no new features.
 - [ ] **Day 7 (May 18) — Submit:** submit project to lablab.ai. Polish landing page. Buffer day for one thing breaking.
+
+### Status as of 2026-05-12 EOD (Day 1 actual)
+
+**Built ahead of schedule.** All Phase 1-5 *code* lives in repo, 20/20 unit tests PASS, dashboard builds. The remaining gates that require the live Gemini API:
+1. `scripts/spike_validation_gate.py` — proves `gemini-2.5-pro` can produce YAML that passes `./bin/lobstertrap test` (Phase 1 risk-buster).
+2. `tests/test_reader_e2e.py` (parametrized over 3 docs) — Reader extracts ≥3 reqs/doc.
+3. `tests/test_synthesizer_e2e.py` (parametrized over 3 docs) — ≥2/3 produce passing YAML.
+4. `tests/test_e2e_block_injection.py` — full live stack blocks the indirect injection.
+5. `tests/test_latency_60s.py` — hero-metric: upload → deployed under 60s.
+
+**Blocker:** `GEMINI_API_KEY` is not set in env, .env, or shell rc. Set with `export GEMINI_API_KEY=...` (or paste via `! export …` if using Claude Code), then `uv run python scripts/spike_validation_gate.py` to start the validation cascade.
 
 See `docs/BUILD_PLAYBOOK.md` for the detailed daily playbook with specific tasks and Claude Code prompts.
 
