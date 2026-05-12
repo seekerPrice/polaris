@@ -53,20 +53,40 @@ for port in 11434 8000; do
   done
 done
 
-# Run the e2e tests — latency FIRST against fresh state, then injection.
-# Running them in the other order causes the 2nd Synthesizer call to overlap with the
-# first job's _redeploy task, contending on Gemini quota + LobsterTrap lock and pushing
-# elapsed past the 60s hero-metric.
+# Run the latency test against fresh state.
 echo "[verify_live] running latency test (fresh state)…"
 POLARIS_LIVE_E2E=1 uv run pytest tests/test_latency_60s.py -v -s
 LATENCY_EXIT=$?
+
+# Tear down + reset before the second test so Gemini rate limits recover and there's no
+# state contention with the previous job's audit-tail task.
+echo "[verify_live] resetting between tests…"
+cleanup
+sleep 5
+rm -f polaris.db && rm -rf artifacts/* && mkdir -p artifacts/audit_logs
+
+# Re-spawn the stack
+echo "[verify_live] re-starting shim + API for injection test…"
+uv run uvicorn polaris.utils.openai_gemini_shim:app --port 11434 >/tmp/polaris_shim2.log 2>&1 &
+uv run uvicorn polaris.api.server:app --port 8000 >/tmp/polaris_api2.log 2>&1 &
+for port in 11434 8000; do
+  for i in {1..30}; do
+    if curl -sf "http://localhost:$port/healthz" >/dev/null 2>&1 \
+       || curl -sf "http://localhost:$port/openapi.json" >/dev/null 2>&1 \
+       || curl -sf "http://localhost:$port/" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.5
+    [[ $i -eq 30 ]] && { echo "[verify_live] :$port did not come up in 15s" >&2; exit 1; }
+  done
+done
 
 echo "[verify_live] running injection block test…"
 POLARIS_LIVE_E2E=1 uv run pytest tests/test_e2e_block_injection.py -v -s
 INJECTION_EXIT=$?
 
 if [[ $LATENCY_EXIT -eq 0 && $INJECTION_EXIT -eq 0 ]]; then
-  echo "[verify_live] OK — both tests passed"
+  echo "[verify_live] OK — both tests passed (latency=$LATENCY_EXIT injection=$INJECTION_EXIT)"
 else
   echo "[verify_live] FAIL — latency=$LATENCY_EXIT injection=$INJECTION_EXIT"
   exit 1

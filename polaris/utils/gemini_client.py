@@ -48,7 +48,7 @@ class GeminiClient:
         self,
         api_key: str | None = None,
         default_model: str = "gemini-3.1-flash-lite",
-        max_retries: int = 3,
+        max_retries: int = 2,
         base_backoff_s: float = 0.5,
     ) -> None:
         key = api_key or os.environ.get("GEMINI_API_KEY")

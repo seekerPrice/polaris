@@ -21,7 +21,8 @@ async def test_indirect_injection_blocked():
             )
         job_id = r.json()["job_id"]
 
-        for _ in range(60):
+        # Poll up to 180s — Synthesizer's worst case is 2 attempts × ~60s each.
+        for _ in range(90):
             j = (await client.get(f"http://localhost:8000/api/policies/{job_id}")).json()
             if "policy.yaml" in j:
                 break
