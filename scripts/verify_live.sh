@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Bring up shim + API + Lobster Trap, run the live e2e tests, tear down.
 # Used in Phase 6 + Phase 7 fresh-clone validation.
-set -euo pipefail
+#
+# NOTE: NOT using `set -e` because we want both tests to run even if one fails,
+# so we can report the full picture instead of bailing on the first non-zero exit.
+set -uo pipefail
 
 cleanup() {
   echo "[verify_live] tearing down…"

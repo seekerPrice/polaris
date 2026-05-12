@@ -23,7 +23,7 @@ class _LobsterMeta(BaseModel):
 
 
 class _ChatReq(BaseModel):
-    model: str = "gemini-3-flash-preview"
+    model: str = "gemini-3.1-flash-lite"
     messages: list[_Msg]
     temperature: float = 0.2
     # Lobster Trap reads `_lobstertrap` from the original wire request before forwarding

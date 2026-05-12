@@ -30,7 +30,7 @@ async def _chat(
     domains: list[str],
 ) -> str:
     payload = {
-        "model": "gemini-3-flash-preview",
+        "model": "gemini-3.1-flash-lite",
         "messages": messages,
         "_lobstertrap": {
             "declared_intent": declared_intent,
