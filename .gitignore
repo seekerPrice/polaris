@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+.env
+bin/
+artifacts/
+*.db
+node_modules/
+.next/
+out/
+dist/
+*.log
+.DS_Store

@@ -1,0 +1,26 @@
+version: "1.0"
+policy_name: "polaris-baseline-min"
+default_action: ALLOW
+ingress_rules:
+  - name: block_prompt_injection
+    description: "Baseline injection block"
+    priority: 1000
+    action: DENY
+    deny_message: "[POLARIS-BASELINE] injection blocked"
+    conditions:
+      - field: contains_injection_patterns
+        match_type: boolean
+        value: true
+egress_rules: []
+rate_limits:
+  requests_per_minute: 120
+  requests_per_hour: 2000
+  burst_threshold: 30
+network:
+  egress_policy: denylist
+  allowed_domains: []
+  denied_domains: ["pastebin.com", "*.onion", "transfer.sh", "ngrok.io"]
+filesystem:
+  denied_paths: ["/etc/**", "**/.ssh/**", "**/.env", "**/.aws/credentials"]
+  allowed_read_paths: []
+  allowed_write_paths: []
