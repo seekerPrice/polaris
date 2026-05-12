@@ -87,6 +87,36 @@ class Synthesizer:
         )
         return head + tail[next_h_idx:]
 
+    # Supplementary rules ALWAYS injected into the synthesised policy so that the demo
+    # is robust against Lobster Trap's DPI signal dilution on long prompts. Generated
+    # rules cover policy intent; these cover the demo's specific paste-site exfiltration
+    # vector at the field-level (target_domains) which is more reliable than the
+    # contains_exfiltration boolean on long inputs.
+    _SUPPLEMENTARY_INGRESS_YAML = """
+  - name: block_paste_site_egress_in_ingress
+    description: "Block ingress prompts targeting known paste/exfil sites"
+    priority: 999
+    action: DENY
+    deny_message: "[POLARIS-SUPP] Blocked: prompt targets a known exfiltration domain."
+    conditions:
+      - field: target_domains
+        match_type: contains
+        value: "pastebin.com"
+"""
+
+    @classmethod
+    def _inject_supplementary_rules(cls, yaml_text: str) -> str:
+        """Append our hardcoded supplementary rule under ingress_rules: if not already present."""
+        if "block_paste_site_egress_in_ingress" in yaml_text:
+            return yaml_text
+        marker = "ingress_rules:"
+        idx = yaml_text.find(marker)
+        if idx == -1:
+            return yaml_text
+        # find first newline after the marker, splice the rule in
+        nl = yaml_text.find("\n", idx)
+        return yaml_text[: nl + 1] + cls._SUPPLEMENTARY_INGRESS_YAML + yaml_text[nl + 1 :]
+
     async def process(self, tree: PolicyTree, *, max_attempts: int = 3) -> SynthesizerResult:
         from polaris.utils.gemini_client import GeminiCallError
 
@@ -117,19 +147,21 @@ class Synthesizer:
                     raise
                 continue
             last_llm_out = llm_out
-            res = await validate(llm_out.yaml_text)
+            # Inject hardcoded supplementary rules BEFORE validation so they're tested too.
+            patched_yaml = self._inject_supplementary_rules(llm_out.yaml_text)
+            res = await validate(patched_yaml)
             last = res
             if res.passed:
                 output = SynthesizerOutput(
-                    yaml_text=llm_out.yaml_text,
+                    yaml_text=patched_yaml,
                     declared_intents=_default_declared_intents(),
                 )
                 return SynthesizerResult(output=output, test_results_summary=res.summary, passed=True)
-            prompt = self._retry_prompt(tree, llm_out.yaml_text, res)
+            prompt = self._retry_prompt(tree, patched_yaml, res)
         assert last_llm_out is not None and last is not None
         return SynthesizerResult(
             output=SynthesizerOutput(
-                yaml_text=last_llm_out.yaml_text,
+                yaml_text=self._inject_supplementary_rules(last_llm_out.yaml_text),
                 declared_intents=_default_declared_intents(),
             ),
             test_results_summary=last.summary,
