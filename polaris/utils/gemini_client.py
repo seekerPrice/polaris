@@ -72,10 +72,11 @@ class GeminiClient:
         else returns the raw .text string. Retries on transient errors only.
         """
         chosen_model = model or self._default_model
-        # Cap output tokens — without this, Gemini occasionally pads with thousands of
-        # trailing whitespace lines, hits the SDK buffer, and returns truncated JSON.
-        # 4096 is plenty for a Lobster Trap policy YAML or a Reader PolicyTree.
-        config: dict[str, Any] = {"temperature": temperature, "max_output_tokens": 4096}
+        # 16K output budget. gemini-2.5-pro has implicit "thinking" tokens that count
+        # against this budget — too small (e.g. 4K) and the model exhausts the budget on
+        # internal reasoning before emitting any visible text, returning resp.text=None.
+        # 16K leaves comfortable headroom for both thinking and a ~5KB Lobster Trap YAML.
+        config: dict[str, Any] = {"temperature": temperature, "max_output_tokens": 16384}
         if system_instruction:
             config["system_instruction"] = system_instruction
         if response_schema is not None:
