@@ -17,7 +17,7 @@ async def event_stream() -> AsyncIterator[dict]:
             # default-named events. The frontend discriminates on JSON.parse(e.data).type.
             yield {"data": json.dumps(ev)}
     finally:
-        pass
+        BUS.unsubscribe(q)
 
 
 def sse_response() -> EventSourceResponse:

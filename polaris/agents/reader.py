@@ -73,7 +73,7 @@ class Reader:
         self._client = client or GeminiClient(default_model="gemini-3-flash-preview")
         self._system_prompt = _extract_prompt_body(self.PROMPT_PATH.read_text(encoding="utf-8"))
 
-    async def process(self, document_text: str, *, max_attempts: int = 3) -> PolicyTree:
+    async def process(self, document_text: str, *, max_attempts: int = 2) -> PolicyTree:
         from pydantic import ValidationError
         from polaris.utils.gemini_client import GeminiCallError
 

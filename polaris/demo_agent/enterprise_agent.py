@@ -50,8 +50,11 @@ def _read_customer_feedback(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
 async def main(query: str) -> None:
-    feedback_path = Path("examples/customer_feedback_today.txt")
+    feedback_path = _REPO_ROOT / "examples" / "customer_feedback_today.txt"
     feedback = _read_customer_feedback(feedback_path)
     messages = [
         {"role": "system", "content": SYSTEM},

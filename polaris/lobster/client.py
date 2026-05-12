@@ -96,9 +96,14 @@ class LobsterTrap:
 
     async def tail_audit_log(self, *, generation: int) -> AsyncIterator[AuditEntry]:
         """Tail the JSONL until LobsterTrap reloads to a new generation. Re-opens the file
-        on EOF if the inode changes (handles file rotation)."""
+        on EOF if the path's inode changes (handles file rotation/truncation across reload)."""
         await asyncio.sleep(0.05)
         f = await aiofiles.open(self._audit_log, "r")
+        # Track inode of the path we opened (NOT the fd — aiofiles fd is opaque/async).
+        try:
+            opened_ino = self._audit_log.stat().st_ino
+        except OSError:
+            opened_ino = None
         try:
             await f.seek(0, os.SEEK_END)
             while True:
@@ -107,13 +112,13 @@ class LobsterTrap:
                 line = await f.readline()
                 if not line:
                     await asyncio.sleep(0.2)
+                    # Re-open if the path now points to a different inode.
                     try:
-                        if (
-                            self._audit_log.exists()
-                            and self._audit_log.stat().st_ino != os.fstat(f.fileno()).st_ino
-                        ):
+                        cur_ino = self._audit_log.stat().st_ino
+                        if opened_ino is not None and cur_ino != opened_ino:
                             await f.close()
                             f = await aiofiles.open(self._audit_log, "r")
+                            opened_ino = cur_ino
                     except OSError:
                         pass
                     continue

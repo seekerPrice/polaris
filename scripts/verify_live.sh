@@ -50,8 +50,21 @@ for port in 11434 8000; do
   done
 done
 
-# Run the e2e tests
-echo "[verify_live] running live e2e tests…"
-POLARIS_LIVE_E2E=1 uv run pytest tests/test_e2e_block_injection.py tests/test_latency_60s.py -v -s
+# Run the e2e tests — latency FIRST against fresh state, then injection.
+# Running them in the other order causes the 2nd Synthesizer call to overlap with the
+# first job's _redeploy task, contending on Gemini quota + LobsterTrap lock and pushing
+# elapsed past the 60s hero-metric.
+echo "[verify_live] running latency test (fresh state)…"
+POLARIS_LIVE_E2E=1 uv run pytest tests/test_latency_60s.py -v -s
+LATENCY_EXIT=$?
 
-echo "[verify_live] OK"
+echo "[verify_live] running injection block test…"
+POLARIS_LIVE_E2E=1 uv run pytest tests/test_e2e_block_injection.py -v -s
+INJECTION_EXIT=$?
+
+if [[ $LATENCY_EXIT -eq 0 && $INJECTION_EXIT -eq 0 ]]; then
+  echo "[verify_live] OK — both tests passed"
+else
+  echo "[verify_live] FAIL — latency=$LATENCY_EXIT injection=$INJECTION_EXIT"
+  exit 1
+fi

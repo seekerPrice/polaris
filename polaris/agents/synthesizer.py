@@ -87,37 +87,68 @@ class Synthesizer:
         )
         return head + tail[next_h_idx:]
 
-    # Supplementary rules ALWAYS injected into the synthesised policy so that the demo
-    # is robust against Lobster Trap's DPI signal dilution on long prompts. Generated
-    # rules cover policy intent; these cover the demo's specific paste-site exfiltration
-    # vector at the field-level (target_domains) which is more reliable than the
-    # contains_exfiltration boolean on long inputs.
+    # Supplementary rules ALWAYS injected into the synthesised policy so the demo is
+    # robust against Lobster Trap's DPI signal dilution on long prompts. We use
+    # field-level signals (target_domains) and per-paste-site rules — more reliable than
+    # the contains_exfiltration boolean which gets diluted on >100-token prompts.
+    # Each rule is a separate ingress entry (Lobster Trap conditions are AND-ed within
+    # a rule, so each paste-site domain needs its own rule to OR them).
     _SUPPLEMENTARY_INGRESS_YAML = """
-  - name: block_paste_site_egress_in_ingress
-    description: "Block ingress prompts targeting known paste/exfil sites"
+  - name: block_paste_site_pastebin
+    description: "Block ingress prompts referencing pastebin.com (data exfiltration vector)"
     priority: 999
     action: DENY
-    deny_message: "[POLARIS-SUPP] Blocked: prompt targets a known exfiltration domain."
+    deny_message: "[POLARIS-SUPP] Blocked: prompt targets pastebin.com (exfiltration vector)."
     conditions:
       - field: target_domains
         match_type: contains
         value: "pastebin.com"
+  - name: block_paste_site_transfer_sh
+    description: "Block ingress prompts referencing transfer.sh"
+    priority: 999
+    action: DENY
+    deny_message: "[POLARIS-SUPP] Blocked: prompt targets transfer.sh (exfiltration vector)."
+    conditions:
+      - field: target_domains
+        match_type: contains
+        value: "transfer.sh"
+  - name: block_paste_site_requestbin
+    description: "Block ingress prompts referencing requestbin"
+    priority: 999
+    action: DENY
+    deny_message: "[POLARIS-SUPP] Blocked: prompt targets requestbin (exfiltration vector)."
+    conditions:
+      - field: target_domains
+        match_type: contains
+        value: "requestbin"
 """
 
     @classmethod
     def _inject_supplementary_rules(cls, yaml_text: str) -> str:
-        """Append our hardcoded supplementary rule under ingress_rules: if not already present."""
-        if "block_paste_site_egress_in_ingress" in yaml_text:
+        """Append our hardcoded supplementary rules under ingress_rules: if not already present.
+        Handles three forms of `ingress_rules:`:
+          1. `ingress_rules:\\n  - name: ...`     (normal, items follow)
+          2. `ingress_rules: []`                  (inline empty list — convert to block)
+          3. `ingress_rules:\\n  []`              (block empty list — replace)
+        """
+        if "block_paste_site_pastebin" in yaml_text:
             return yaml_text
         marker = "ingress_rules:"
         idx = yaml_text.find(marker)
         if idx == -1:
             return yaml_text
-        # find first newline after the marker, splice the rule in
-        nl = yaml_text.find("\n", idx)
-        return yaml_text[: nl + 1] + cls._SUPPLEMENTARY_INGRESS_YAML + yaml_text[nl + 1 :]
+        # Detect form 2: `ingress_rules: []`
+        line_end = yaml_text.find("\n", idx)
+        if line_end == -1:
+            line_end = len(yaml_text)
+        line = yaml_text[idx:line_end]
+        if "[]" in line:
+            # convert `ingress_rules: []` → `ingress_rules:\n` + supplementary
+            return yaml_text[:idx] + "ingress_rules:\n" + cls._SUPPLEMENTARY_INGRESS_YAML.lstrip("\n") + yaml_text[line_end + 1 :]
+        # Forms 1+3: splice after the marker line
+        return yaml_text[: line_end + 1] + cls._SUPPLEMENTARY_INGRESS_YAML + yaml_text[line_end + 1 :]
 
-    async def process(self, tree: PolicyTree, *, max_attempts: int = 3) -> SynthesizerResult:
+    async def process(self, tree: PolicyTree, *, max_attempts: int = 2) -> SynthesizerResult:
         from polaris.utils.gemini_client import GeminiCallError
 
         prompt = self._initial_prompt(tree)

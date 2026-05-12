@@ -72,7 +72,10 @@ class GeminiClient:
         else returns the raw .text string. Retries on transient errors only.
         """
         chosen_model = model or self._default_model
-        config: dict[str, Any] = {"temperature": temperature}
+        # Cap output tokens — without this, Gemini occasionally pads with thousands of
+        # trailing whitespace lines, hits the SDK buffer, and returns truncated JSON.
+        # 4096 is plenty for a Lobster Trap policy YAML or a Reader PolicyTree.
+        config: dict[str, Any] = {"temperature": temperature, "max_output_tokens": 4096}
         if system_instruction:
             config["system_instruction"] = system_instruction
         if response_schema is not None:
