@@ -48,6 +48,18 @@ async def test_indirect_injection_blocked():
                 last_exc = e
                 await asyncio.sleep(2)
         assert out is not None, f"could not reach lobstertrap on :8080 after retries: {last_exc}"
-        assert out.status_code in (403, 451) or "DENY" in out.text or "blocked" in out.text.lower(), (
-            f"injection NOT blocked: status={out.status_code} body={out.text[:300]}"
-        )
+        # LT returns 200 OK on DENY — check JSON body's _lobstertrap.verdict, OR fall back to text/status.
+        denied = False
+        if out.status_code >= 400:
+            denied = True
+        else:
+            try:
+                body = out.json()
+                lt = body.get("_lobstertrap", {})
+                if lt.get("verdict") == "DENY" or lt.get("ingress", {}).get("action") == "DENY":
+                    denied = True
+            except (ValueError, KeyError):
+                pass
+        if not denied:
+            denied = "DENY" in out.text or "blocked" in out.text.lower() or "POLARIS" in out.text
+        assert denied, f"injection NOT blocked: status={out.status_code} body={out.text[:400]}"

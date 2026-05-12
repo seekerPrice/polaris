@@ -58,15 +58,31 @@ class LobsterTrap:
                 stderr=asyncio.subprocess.PIPE,
             )
             assert self._proc.stderr is not None
-            try:
+            assert self._proc.stdout is not None
+
+            # Race stdout + stderr for the ready signal — upstream LT may log to either.
+            async def _wait_for_ready_line(stream) -> bool:
                 while True:
-                    raw = await asyncio.wait_for(self._proc.stderr.readline(), timeout=15)
+                    raw = await stream.readline()
                     if not raw:
-                        raise RuntimeError("lobstertrap exited before becoming ready")
-                    line = raw.decode(errors="ignore")
-                    if "listening" in line.lower() or "8080" in line:
-                        break
+                        return False
+                    line = raw.decode(errors="ignore").lower()
+                    if "listening on" in line or ":8080" in line:
+                        return True
+
+            tasks = [
+                asyncio.create_task(_wait_for_ready_line(self._proc.stderr)),
+                asyncio.create_task(_wait_for_ready_line(self._proc.stdout)),
+            ]
+            try:
+                done, pending = await asyncio.wait(tasks, timeout=15, return_when=asyncio.FIRST_COMPLETED)
+                for t in pending:
+                    t.cancel()
+                if not done or all(not t.result() for t in done):
+                    raise RuntimeError("lobstertrap did not signal ready in 15s")
             except asyncio.TimeoutError as e:
+                for t in tasks:
+                    t.cancel()
                 await self._stop_locked()
                 raise RuntimeError("lobstertrap did not become ready in 15s") from e
             self._generation += 1

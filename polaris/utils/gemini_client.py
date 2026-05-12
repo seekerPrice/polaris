@@ -9,6 +9,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from functools import lru_cache
+
 from dotenv import load_dotenv
 from google import genai
 from pydantic import BaseModel
@@ -18,6 +20,14 @@ from pydantic import BaseModel
 load_dotenv()
 
 log = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=8)
+def get_client(default_model: str = "gemini-3.1-flash-lite") -> "GeminiClient":
+    """Shared GeminiClient singleton per default-model. Avoids reconstructing the
+    underlying SDK client (and re-reading GEMINI_API_KEY) on every Reader/Synth/RedTeam
+    instantiation. Callers can still pass `client=<stub>` to override (used in tests)."""
+    return GeminiClient(default_model=default_model)
 
 
 class GeminiCallError(RuntimeError):

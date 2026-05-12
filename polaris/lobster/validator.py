@@ -56,11 +56,13 @@ async def validate(yaml_text: str, lobstertrap_binary: Path = Path("./bin/lobste
             capture_output=True, text=True, timeout=60,
         )
     except subprocess.TimeoutExpired as e:
+        stdout = (e.stdout or b"").decode(errors="ignore") if isinstance(e.stdout, bytes) else (e.stdout or "")
+        stderr = (e.stderr or b"").decode(errors="ignore") if isinstance(e.stderr, bytes) else (e.stderr or "")
         return TestResults(
             passed=False,
             lt_exit_code=None,
-            lt_stdout=(e.stdout or b"").decode(errors="ignore") if isinstance(e.stdout, bytes) else (e.stdout or ""),
-            lt_stderr=f"timeout after 60s: {e}",
+            lt_stdout=stdout,
+            lt_stderr=f"timeout after 60s: {e}. stderr={stderr[:500]}",
         )
     finally:
         tmp_path.unlink(missing_ok=True)

@@ -70,7 +70,8 @@ class Synthesizer:
     _EXAMPLE_5_HEADER = "### Example 5 — Block obfuscated payloads (Red Team-discovered class)"
 
     def __init__(self, client: GeminiClient | None = None) -> None:
-        self._client = client or GeminiClient(default_model="gemini-2.5-pro")
+        from polaris.utils.gemini_client import get_client
+        self._client = client or get_client("gemini-2.5-pro")
         full = _extract_prompt_body(self.PROMPT_PATH.read_text(encoding="utf-8"))
         self._initial_system_prompt = self._strip_example_5(full)
         self._regen_system_prompt = full
@@ -217,12 +218,63 @@ class Synthesizer:
             passed=False,
         )
 
+    # Single-condition rule for obfuscation-class gaps. Lobster Trap's regex DPI can't
+    # decode encoded payloads (base64/ROT13/etc.), so contains_exfiltration is FALSE on
+    # the literal encoded string. A compound `contains_obfuscation AND contains_exfiltration`
+    # rule (per Synthesizer prompt Example 5) misses these attacks. We inject this
+    # single-condition rule deterministically on regenerate when the gap is obfuscation-class
+    # — Gemini ignored prompt hints, so we patch the YAML post-LLM.
+    _OBFUSCATION_CLOSURE_RULE: dict = {
+        "name": "polaris_redteam_block_obfuscation",
+        "description": "Block any prompt with obfuscation signals (base64/ROT13/homoglyph). Closes the Red Team gap on encoded exfiltration payloads.",
+        "priority": 995,
+        "action": "DENY",
+        "deny_message": "[POLARIS-REDTEAM] Blocked: obfuscation detected (single-condition rule closes the Red Team gap).",
+        "conditions": [{"field": "contains_obfuscation", "match_type": "boolean", "value": True}],
+    }
+
+    @classmethod
+    def _inject_obfuscation_closure(cls, yaml_text: str) -> str:
+        """Idempotently splice the single-condition obfuscation rule into ingress_rules.
+        Used by regenerate() when the gap is obfuscation-class."""
+        import yaml as _yaml
+        if cls._OBFUSCATION_CLOSURE_RULE["name"] in yaml_text:
+            return yaml_text
+        try:
+            data = _yaml.safe_load(yaml_text)
+        except _yaml.YAMLError:
+            return yaml_text
+        if not isinstance(data, dict):
+            return yaml_text
+        ingress = data.get("ingress_rules") or []
+        if not isinstance(ingress, list):
+            return yaml_text
+        ingress.append(cls._OBFUSCATION_CLOSURE_RULE)
+        data["ingress_rules"] = ingress
+        return _yaml.safe_dump(data, sort_keys=False, indent=2, default_flow_style=False)
+
     async def regenerate(
         self, tree: PolicyTree, gap_evidence: dict[str, Any], previous_yaml: str
     ) -> SynthesizerResult:
+        # Lobster Trap's regex DPI cannot decode encoded payloads (base64, ROT13, etc.) —
+        # it only sees the opaque encoded string. A COMPOUND rule like
+        # "contains_obfuscation AND contains_exfiltration" misses these attacks because
+        # contains_exfiltration is FALSE on the literal encoded string.
+        # For obfuscation-class gaps, instruct Gemini to emit a SINGLE-condition rule.
+        obfuscation_hint = ""
+        prompt_lower = str(gap_evidence.get("attack_prompt", "")).lower()
+        if "base64" in prompt_lower or "decode" in prompt_lower or "obfuscat" in prompt_lower:
+            obfuscation_hint = (
+                "\nIMPORTANT (gap class = obfuscation): emit a rule with a SINGLE condition "
+                "matching `contains_obfuscation: true` (boolean). Do NOT compound with "
+                "`contains_exfiltration` — Lobster Trap cannot decode the payload, so the "
+                "exfiltration signal is FALSE on encoded strings. A single-condition rule on "
+                "contains_obfuscation is the only way to close this gap deterministically.\n"
+            )
         prompt = (
             f"REGENERATION MODE.\n\nPrevious policy:\n{previous_yaml}\n\n"
-            f"Red Team Agent gap:\n{gap_evidence}\n\n"
+            f"Red Team Agent gap:\n{gap_evidence}\n"
+            f"{obfuscation_hint}"
             "Generate an updated yaml_text that closes this gap WITHOUT removing existing rules. "
             "Add the minimal set of new rules.\n\n"
             f"Original tree:\n{tree.model_dump_json(indent=2)}"
@@ -234,10 +286,17 @@ class Synthesizer:
             model="gemini-2.5-pro",
             temperature=0.1,
         )
-        res = await validate(llm_out.yaml_text)
+        patched = self._inject_supplementary_rules(llm_out.yaml_text)
+        # For obfuscation-class gaps, deterministically add the single-condition rule
+        # because Gemini reliably emits compound rules per Synthesizer prompt Example 5
+        # (which is correct in general but misses encoded-payload attacks).
+        prompt_lower = str(gap_evidence.get("attack_prompt", "")).lower()
+        if "base64" in prompt_lower or "decode" in prompt_lower or "obfuscat" in prompt_lower:
+            patched = self._inject_obfuscation_closure(patched)
+        res = await validate(patched)
         return SynthesizerResult(
             output=SynthesizerOutput(
-                yaml_text=llm_out.yaml_text,
+                yaml_text=patched,
                 declared_intents=_default_declared_intents(),
             ),
             test_results_summary=res.summary,

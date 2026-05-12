@@ -31,6 +31,9 @@ ARTIFACTS = Path("./artifacts")
 LT = LobsterTrap()
 # Track the audit-log tail task so we can cancel before reloading Lobster Trap.
 _AUDIT_TASK: asyncio.Task | None = None
+# Serialise _redeploy across concurrent uploads — two browser tabs uploading
+# back-to-back would otherwise fight for _AUDIT_TASK + LT.reload sequencing.
+_REDEPLOY_LOCK = asyncio.Lock()
 _ATTEMPTED: list[str] = []
 
 
@@ -40,7 +43,7 @@ async def events():
 
 
 @router.post("/api/policies/generate")
-async def generate(file: UploadFile = File(...), bg: BackgroundTasks = None):  # type: ignore[arg-type]
+async def generate(bg: BackgroundTasks, file: UploadFile = File(...)):
     job_id = uuid.uuid4().hex[:12]
     job_dir = ARTIFACTS / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -105,18 +108,20 @@ async def redteam_start(job_id: str):
 
 async def _redeploy(job_id: str, policy_path: Path) -> int:
     """Cancel any prior audit-tail task, reload Lobster Trap to a new generation,
-    then start a fresh audit-tail bound to that generation."""
+    then start a fresh audit-tail bound to that generation. Serialised so concurrent
+    uploads don't fight for the same singleton LT/audit task."""
     global _AUDIT_TASK
-    if _AUDIT_TASK and not _AUDIT_TASK.done():
-        _AUDIT_TASK.cancel()
-        try:
-            await _AUDIT_TASK
-        except (asyncio.CancelledError, Exception):
-            pass
-    gen = await LT.reload(policy_path)
-    _AUDIT_TASK = asyncio.create_task(_pump_audit_log(job_id, gen))
-    await BUS.publish({"type": "lobstertrap_deployed", "job_id": job_id, "generation": gen})
-    return gen
+    async with _REDEPLOY_LOCK:
+        if _AUDIT_TASK and not _AUDIT_TASK.done():
+            _AUDIT_TASK.cancel()
+            try:
+                await _AUDIT_TASK
+            except (asyncio.CancelledError, Exception):
+                pass
+        gen = await LT.reload(policy_path)
+        _AUDIT_TASK = asyncio.create_task(_pump_audit_log(job_id, gen))
+        await BUS.publish({"type": "lobstertrap_deployed", "job_id": job_id, "generation": gen})
+        return gen
 
 
 async def _pipeline(job_id: str, file_path: Path) -> None:
@@ -184,6 +189,10 @@ async def _redteam_loop(job_id: str, policy_yaml: str, audits: list[dict]) -> No
                 "expected": probe.expected_verdict,
                 "actual": result.actual_verdict,
             })
+            # Give LT a moment to fully come up after the hot-reload before firing
+            # the next probe — otherwise probe 3 races against LT.spawn() and gets
+            # a ConnectError instead of the expected DENY.
+            await asyncio.sleep(2)
 
 
 async def _patch_policy(job_id: str, gap_evidence: dict) -> None:

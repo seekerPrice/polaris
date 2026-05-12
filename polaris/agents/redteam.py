@@ -47,7 +47,8 @@ class RedTeam:
 
     def _ensure_client(self) -> GeminiClient:
         if self._client is None:
-            self._client = GeminiClient(default_model="gemini-2.5-pro")
+            from polaris.utils.gemini_client import get_client
+            self._client = get_client("gemini-2.5-pro")
         return self._client
 
     async def generate_batch(
@@ -74,7 +75,7 @@ class RedTeam:
             r = await c.post(
                 self._target_url,
                 json={
-                    "model": "gemini-3-flash-preview",
+                    "model": "gemini-3.1-flash-lite",
                     "messages": [{"role": "user", "content": probe.prompt}],
                     "_lobstertrap": {
                         "declared_intent": "general",
@@ -82,7 +83,21 @@ class RedTeam:
                     },
                 },
             )
-        actual = "DENY" if r.status_code >= 400 else "ALLOW"
+        # Lobster Trap returns HTTP 200 OK on DENY, putting the verdict in the JSON
+        # body's `_lobstertrap.verdict` (or `.ingress.action`) field — NOT in status_code.
+        actual = "ALLOW"
+        if r.status_code >= 400:
+            actual = "DENY"
+        else:
+            try:
+                body = r.json()
+                lt = body.get("_lobstertrap", {}) if isinstance(body, dict) else {}
+                ingress = lt.get("ingress", {}) if isinstance(lt, dict) else {}
+                verdict = lt.get("verdict") or ingress.get("action") or "ALLOW"
+                if verdict == "DENY":
+                    actual = "DENY"
+            except (ValueError, KeyError):
+                pass
         is_gap = probe.expected_verdict == "DENY" and actual == "ALLOW"
         return ProbeResult(probe=probe, actual_verdict=actual, is_gap=is_gap)
 

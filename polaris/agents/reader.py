@@ -69,8 +69,8 @@ class Reader:
     PROMPT_PATH = Path(__file__).parents[2] / "prompts" / "reader_agent.md"
 
     def __init__(self, client=None) -> None:
-        from polaris.utils.gemini_client import GeminiClient
-        self._client = client or GeminiClient(default_model="gemini-3.1-flash-lite")
+        from polaris.utils.gemini_client import get_client
+        self._client = client or get_client("gemini-3.1-flash-lite")
         self._system_prompt = _extract_prompt_body(self.PROMPT_PATH.read_text(encoding="utf-8"))
 
     async def process(self, document_text: str, *, max_attempts: int = 2) -> PolicyTree:
