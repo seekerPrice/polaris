@@ -70,7 +70,7 @@ class Synthesizer:
     _EXAMPLE_5_HEADER = "### Example 5 — Block obfuscated payloads (Red Team-discovered class)"
 
     def __init__(self, client: GeminiClient | None = None) -> None:
-        self._client = client or GeminiClient(default_model="gemini-3.1-pro-preview")
+        self._client = client or GeminiClient(default_model="gemini-2.5-pro")
         full = _extract_prompt_body(self.PROMPT_PATH.read_text(encoding="utf-8"))
         self._initial_system_prompt = self._strip_example_5(full)
         self._regen_system_prompt = full
@@ -88,17 +88,34 @@ class Synthesizer:
         return head + tail[next_h_idx:]
 
     async def process(self, tree: PolicyTree, *, max_attempts: int = 3) -> SynthesizerResult:
+        from polaris.utils.gemini_client import GeminiCallError
+
         prompt = self._initial_prompt(tree)
         last: TestResults | None = None
         last_llm_out: LLMSynthesizerOutput | None = None
-        for _ in range(1, max_attempts + 1):
-            llm_out: LLMSynthesizerOutput = await self._client.generate(
-                prompt=prompt,
-                system_instruction=self._initial_system_prompt,
-                response_schema=LLMSynthesizerOutput,
-                model="gemini-3.1-pro-preview",
-                temperature=0.1,
-            )
+        last_err_msg = ""
+        for attempt in range(1, max_attempts + 1):
+            try:
+                llm_out: LLMSynthesizerOutput = await self._client.generate(
+                    prompt=prompt,
+                    system_instruction=self._initial_system_prompt,
+                    response_schema=LLMSynthesizerOutput,
+                    model="gemini-2.5-pro",
+                    temperature=0.1,
+                )
+            except GeminiCallError as e:
+                # JSON-parse / output-truncation failures land here. Retry with a hint
+                # to keep the YAML brief and well-formed, NOT pad with whitespace.
+                last_err_msg = str(e)[:300]
+                prompt = (
+                    self._initial_prompt(tree)
+                    + f"\n\nPREVIOUS ATTEMPT RAW-OUTPUT FAILED: {last_err_msg}\n"
+                    + "IMPORTANT: emit a COMPACT YAML — no trailing whitespace, no padding lines, "
+                      "no comments. Aim for under 4000 characters total."
+                )
+                if attempt == max_attempts:
+                    raise
+                continue
             last_llm_out = llm_out
             res = await validate(llm_out.yaml_text)
             last = res
@@ -133,7 +150,7 @@ class Synthesizer:
             prompt=prompt,
             system_instruction=self._regen_system_prompt,
             response_schema=LLMSynthesizerOutput,
-            model="gemini-3.1-pro-preview",
+            model="gemini-2.5-pro",
             temperature=0.1,
         )
         res = await validate(llm_out.yaml_text)
