@@ -9,8 +9,13 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from dotenv import load_dotenv
 from google import genai
 from pydantic import BaseModel
+
+# Load .env at module import so callers (Reader, Synthesizer, RedTeam, shim, FastAPI) can
+# `GeminiClient()` without explicit env-var setup. Idempotent — safe to call repeatedly.
+load_dotenv()
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +47,7 @@ class GeminiClient:
     def __init__(
         self,
         api_key: str | None = None,
-        default_model: str = "gemini-2.5-flash",
+        default_model: str = "gemini-3-flash-preview",
         max_retries: int = 3,
         base_backoff_s: float = 0.5,
     ) -> None:

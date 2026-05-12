@@ -21,6 +21,14 @@ class IntentSchema(BaseModel):
     tool_intents: dict[str, IntentSchemaTool] = Field(default_factory=dict)
 
 
+# IMPORTANT: Gemini's structured output rejects open dict fields (`additionalProperties`).
+# `LLMSynthesizerOutput` is the schema sent to Gemini — yaml_text only.
+# `SynthesizerOutput` is the public type (yaml + declared_intents synthesised in Python from
+# a per-agent template, since declared_intents is deterministic per agent_id).
+class LLMSynthesizerOutput(BaseModel):
+    yaml_text: str
+
+
 class SynthesizerOutput(BaseModel):
     yaml_text: str
     declared_intents: dict[str, IntentSchema] = Field(default_factory=dict)
@@ -32,6 +40,27 @@ class SynthesizerResult(BaseModel):
     passed: bool
 
 
+# Per-agent declared_intent template. See prompts/synthesizer_agent.md "Declared intents schema".
+def _default_declared_intents() -> dict[str, IntentSchema]:
+    return {
+        "sales-ops-copilot-v1": IntentSchema(
+            default_intent="communication",
+            tool_intents={
+                "read_customer_feedback": IntentSchemaTool(
+                    intent="file_io",
+                    expected_paths=["/home/*/customer_feedback*.txt", "/tmp/*", "examples/customer_feedback*.txt"],
+                    expected_domains=[],
+                ),
+                "post_summary_to_slack": IntentSchemaTool(
+                    intent="communication",
+                    expected_paths=[],
+                    expected_domains=["hooks.slack.com", "*.slack.com"],
+                ),
+            },
+        ),
+    }
+
+
 class Synthesizer:
     PROMPT_PATH = Path(__file__).parents[2] / "prompts" / "synthesizer_agent.md"
 
@@ -41,7 +70,7 @@ class Synthesizer:
     _EXAMPLE_5_HEADER = "### Example 5 — Block obfuscated payloads (Red Team-discovered class)"
 
     def __init__(self, client: GeminiClient | None = None) -> None:
-        self._client = client or GeminiClient(default_model="gemini-2.5-pro")
+        self._client = client or GeminiClient(default_model="gemini-3.1-pro-preview")
         full = _extract_prompt_body(self.PROMPT_PATH.read_text(encoding="utf-8"))
         self._initial_system_prompt = self._strip_example_5(full)
         self._regen_system_prompt = full
@@ -61,23 +90,34 @@ class Synthesizer:
     async def process(self, tree: PolicyTree, *, max_attempts: int = 3) -> SynthesizerResult:
         prompt = self._initial_prompt(tree)
         last: TestResults | None = None
-        last_output: SynthesizerOutput | None = None
+        last_llm_out: LLMSynthesizerOutput | None = None
         for _ in range(1, max_attempts + 1):
-            output: SynthesizerOutput = await self._client.generate(
+            llm_out: LLMSynthesizerOutput = await self._client.generate(
                 prompt=prompt,
                 system_instruction=self._initial_system_prompt,
-                response_schema=SynthesizerOutput,
-                model="gemini-2.5-pro",
+                response_schema=LLMSynthesizerOutput,
+                model="gemini-3.1-pro-preview",
                 temperature=0.1,
             )
-            last_output = output
-            res = await validate(output.yaml_text)
+            last_llm_out = llm_out
+            res = await validate(llm_out.yaml_text)
             last = res
             if res.passed:
+                output = SynthesizerOutput(
+                    yaml_text=llm_out.yaml_text,
+                    declared_intents=_default_declared_intents(),
+                )
                 return SynthesizerResult(output=output, test_results_summary=res.summary, passed=True)
-            prompt = self._retry_prompt(tree, output.yaml_text, res)
-        assert last_output is not None and last is not None
-        return SynthesizerResult(output=last_output, test_results_summary=last.summary, passed=False)
+            prompt = self._retry_prompt(tree, llm_out.yaml_text, res)
+        assert last_llm_out is not None and last is not None
+        return SynthesizerResult(
+            output=SynthesizerOutput(
+                yaml_text=last_llm_out.yaml_text,
+                declared_intents=_default_declared_intents(),
+            ),
+            test_results_summary=last.summary,
+            passed=False,
+        )
 
     async def regenerate(
         self, tree: PolicyTree, gap_evidence: dict[str, Any], previous_yaml: str
@@ -86,25 +126,32 @@ class Synthesizer:
             f"REGENERATION MODE.\n\nPrevious policy:\n{previous_yaml}\n\n"
             f"Red Team Agent gap:\n{gap_evidence}\n\n"
             "Generate an updated yaml_text that closes this gap WITHOUT removing existing rules. "
-            "Add the minimal set of new rules. Output the same SynthesizerOutput JSON shape.\n\n"
+            "Add the minimal set of new rules.\n\n"
             f"Original tree:\n{tree.model_dump_json(indent=2)}"
         )
-        out: SynthesizerOutput = await self._client.generate(
+        llm_out: LLMSynthesizerOutput = await self._client.generate(
             prompt=prompt,
             system_instruction=self._regen_system_prompt,
-            response_schema=SynthesizerOutput,
-            model="gemini-2.5-pro",
+            response_schema=LLMSynthesizerOutput,
+            model="gemini-3.1-pro-preview",
             temperature=0.1,
         )
-        res = await validate(out.yaml_text)
-        return SynthesizerResult(output=out, test_results_summary=res.summary, passed=res.passed)
+        res = await validate(llm_out.yaml_text)
+        return SynthesizerResult(
+            output=SynthesizerOutput(
+                yaml_text=llm_out.yaml_text,
+                declared_intents=_default_declared_intents(),
+            ),
+            test_results_summary=res.summary,
+            passed=res.passed,
+        )
 
     @staticmethod
     def _initial_prompt(tree: PolicyTree) -> str:
         return (
             "PolicyTree input:\n\n"
             + tree.model_dump_json(indent=2)
-            + "\n\nReturn a SynthesizerOutput JSON with yaml_text and declared_intents."
+            + "\n\nReturn a JSON object with one key: yaml_text — the COMPLETE deployable Lobster Trap YAML policy."
         )
 
     @staticmethod

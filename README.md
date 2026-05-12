@@ -72,7 +72,7 @@ Open `http://localhost:3000` and drag `examples/soc2_excerpt.pdf` onto the uploa
 This project is built for the **Veea Trust Track** at the **TechEx Transforming Enterprise Through AI** hackathon (May 11–19, 2026).
 
 - **[Veea Lobster Trap](https://github.com/veeainc/lobstertrap)** — the deep prompt inspection proxy that Polaris programs and verifies against. We use both the policy YAML and the underused `_lobstertrap` bidirectional metadata feature for declared-vs-detected mismatch detection.
-- **[Google Gemini](https://ai.google.dev/)** — `gemini-2.5-pro` powers the Synthesizer (YAML quality is critical) and the Red Team Agent. `gemini-2.5-flash` powers the Reader (speed). All calls via `google-genai`.
+- **[Google Gemini](https://ai.google.dev/)** — `gemini-3.1-pro-preview` powers the Synthesizer (YAML correctness) and the Red Team Agent (attack creativity). `gemini-3-flash-preview` powers the Reader (2× faster than 2.5-flash with same coverage on real compliance docs). All calls via `google-genai`.
 
 ## Demo
 
@@ -115,7 +115,7 @@ MIT.
 
 ## Team
 
-- *[your name]* — *[your role]*
+- **Lucas (Loo Tan Yu Heng)** — AI engineer, sole builder. Production LLM systems at Hoppi (lead engineer on Hotseller V5 — 25+ orchestrated Gemini agents).
 
 Built in Kuala Lumpur, May 2026, for the TechEx Veea Trust Track hackathon.
 

@@ -61,7 +61,7 @@ class PolicyTree(BaseModel):
 
 
 class Reader:
-    """Reader Agent: parses compliance docs into PolicyTree using gemini-2.5-flash.
+    """Reader Agent: parses compliance docs into PolicyTree using gemini-3-flash-preview.
 
     System prompt body is extracted from prompts/reader_agent.md (CLAUDE.md §6).
     """
@@ -70,7 +70,7 @@ class Reader:
 
     def __init__(self, client=None) -> None:
         from polaris.utils.gemini_client import GeminiClient
-        self._client = client or GeminiClient(default_model="gemini-2.5-flash")
+        self._client = client or GeminiClient(default_model="gemini-3-flash-preview")
         self._system_prompt = _extract_prompt_body(self.PROMPT_PATH.read_text(encoding="utf-8"))
 
     async def process(self, document_text: str, *, max_attempts: int = 3) -> PolicyTree:
@@ -85,7 +85,7 @@ class Reader:
                     prompt=prompt,
                     system_instruction=self._system_prompt,
                     response_schema=PolicyTree,
-                    model="gemini-2.5-flash",
+                    model="gemini-3-flash-preview",
                     temperature=0.1,
                 )
                 return tree

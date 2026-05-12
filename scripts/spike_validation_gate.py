@@ -26,6 +26,16 @@ HAND_TREE = {
     "requirements": [
         {
             "id": "REQ-001",
+            "section": "OWASP LLM01",
+            "control_type": "prompt_injection",
+            "human_text": "Direct and indirect prompt injection attempts must be blocked.",
+            "rationale": "contains_injection_patterns is the primary boolean signal.",
+            "severity": "high",
+            "lobster_trap_fields": ["contains_injection_patterns"],
+            "suggested_action": "DENY",
+        },
+        {
+            "id": "REQ-002",
             "section": "SOC 2 CC6.1",
             "control_type": "credential_exposure",
             "human_text": "The entity restricts access to information assets to authorized users.",
@@ -35,13 +45,33 @@ HAND_TREE = {
             "suggested_action": "DENY",
         },
         {
-            "id": "REQ-002",
-            "section": "OWASP LLM01",
-            "control_type": "prompt_injection",
-            "human_text": "Direct and indirect prompt injection attempts must be blocked.",
-            "rationale": "contains_injection_patterns is the primary boolean signal.",
+            "id": "REQ-003",
+            "section": "SOC 2 CC6.1 / OWASP LLM02",
+            "control_type": "file_access",
+            "human_text": "Logical access to sensitive system paths must be restricted.",
+            "rationale": "Block prompts that reference /etc/, ~/.ssh/, .env, /root/, .aws/credentials, etc.",
             "severity": "high",
-            "lobster_trap_fields": ["contains_injection_patterns"],
+            "lobster_trap_fields": ["contains_sensitive_paths"],
+            "suggested_action": "DENY",
+        },
+        {
+            "id": "REQ-004",
+            "section": "SOC 2 CC6.6 / OWASP LLM07",
+            "control_type": "system_command_execution",
+            "human_text": "Dangerous system commands (rm -rf, sudo, curl|bash) must not be executed by AI agents.",
+            "rationale": "contains_system_commands flag catches shell-injection-style attacks.",
+            "severity": "high",
+            "lobster_trap_fields": ["contains_system_commands"],
+            "suggested_action": "DENY",
+        },
+        {
+            "id": "REQ-005",
+            "section": "OWASP LLM06",
+            "control_type": "data_exfiltration",
+            "human_text": "Prompts attempting to exfiltrate data to attacker-controlled domains must be blocked.",
+            "rationale": "Combine intent_category=data_access with target_domains containing paste sites.",
+            "severity": "high",
+            "lobster_trap_fields": ["contains_exfiltration", "target_domains"],
             "suggested_action": "DENY",
         },
     ],
@@ -49,8 +79,9 @@ HAND_TREE = {
 
 
 class SpikeOutput(BaseModel):
+    # NOTE: Gemini's structured output rejects open dict fields (additionalProperties).
+    # Keep this schema flat — yaml_text is the only thing the spike validates.
     yaml_text: str
-    declared_intents: dict = {}
 
 
 def _strip_example_5(prompt: str) -> str:
@@ -74,7 +105,7 @@ def _extract_prompt_body(text: str) -> str:
 
 
 async def main() -> int:
-    client = GeminiClient(default_model="gemini-2.5-pro")
+    client = GeminiClient(default_model="gemini-3.1-pro-preview")
     raw_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
     system_prompt = _strip_example_5(_extract_prompt_body(raw_prompt))
 
@@ -86,7 +117,7 @@ async def main() -> int:
         ),
         system_instruction=system_prompt,
         response_schema=SpikeOutput,
-        model="gemini-2.5-pro",
+        model="gemini-3.1-pro-preview",
         temperature=0.1,
     )
     yaml_text = out.yaml_text

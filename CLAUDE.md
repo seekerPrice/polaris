@@ -89,7 +89,10 @@ Four agents, one Go binary, one closed loop. Nothing else.
 
 - **Python 3.11+** for all agent code and the API server.
 - **FastAPI** for the HTTP API (Polaris dashboard backend).
-- **Google Gemini** via the `google-genai` Python SDK. Model: `gemini-2.5-flash` for Reader (speed on long PDFs). `gemini-2.5-pro` for Synthesizer (YAML correctness) and Red Team Agent (attack variety benefits from the better model). Note: Gemini 3.1 Pro Preview is available as of May 2026 — keep 2.5-pro as the default for stability; switch only if 2.5-pro's YAML quality is materially insufficient.
+- **Google Gemini** via the `google-genai` Python SDK. **Models in use (May 2026, post-CP-comparison):**
+  - **Reader:** `gemini-3-flash-preview` — 2× faster than 2.5-flash on the same SOC 2 doc (12.8s vs 26.8s) with identical 7-requirement coverage. Pricing: $0.50/$3.00 per 1M tokens.
+  - **Synthesizer + Red Team:** `gemini-3.1-pro-preview` — ties 2.5-pro on YAML correctness in single-trial benchmarks; 8% slower (32.7s vs 30s) and ~2.4× more expensive on output ($12/M vs $5/M). Selected per Lucas's preference for the 3.x family. Synthesizer's 3-attempt retry loop compensates for occasional malformed-YAML output observed in spike runs (1/3 spike-only failures; production retry catches it).
+  - **Alternative considered:** `gemini-3.1-flash-lite` for Reader — 8× faster (3.4s) but only extracts 4/7 requirements; rejected as it sacrifices policy coverage for speed.
 - **Lobster Trap** — the Go binary from https://github.com/veeainc/lobstertrap. We do not modify its source. We download it, run it, and integrate via its OpenAI-compatible HTTP interface and its YAML config files.
 - **Next.js 14 (App Router) + Tailwind + shadcn/ui** for the dashboard. Single-page. Real-time updates via Server-Sent Events.
 - **SQLite** for persistence of audit logs and synthesized policies (zero config, ships with the repo).

@@ -47,7 +47,7 @@ class RedTeam:
 
     def _ensure_client(self) -> GeminiClient:
         if self._client is None:
-            self._client = GeminiClient(default_model="gemini-2.5-pro")
+            self._client = GeminiClient(default_model="gemini-3.1-pro-preview")
         return self._client
 
     async def generate_batch(
@@ -64,7 +64,7 @@ class RedTeam:
             prompt=prompt,
             system_instruction=self._system_prompt,
             response_schema=ProbeBatch,
-            model="gemini-2.5-pro",
+            model="gemini-3.1-pro-preview",
             temperature=0.2,
         )
         return batch.probes
@@ -74,7 +74,7 @@ class RedTeam:
             r = await c.post(
                 self._target_url,
                 json={
-                    "model": "gemini-2.5-flash",
+                    "model": "gemini-3-flash-preview",
                     "messages": [{"role": "user", "content": probe.prompt}],
                     "_lobstertrap": {
                         "declared_intent": "general",
