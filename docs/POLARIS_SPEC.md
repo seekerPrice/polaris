@@ -20,11 +20,11 @@ Polaris is four agents plus a Go binary plus a dashboard, orchestrated as a cont
 
 | Component | Language | Responsibility |
 |---|---|---|
-| Reader Agent | Python (Gemini 2.5 Flash) | Parse policy documents, extract security requirements as a structured tree. |
-| Synthesizer Agent | Python (Gemini 2.5 Pro) | Translate requirements into valid Lobster Trap YAML and per-agent declared_intent schemas. |
+| Reader Agent | Python (Gemini 3.1 Flash-Lite) | Parse policy documents, extract security requirements as a structured tree. |
+| Synthesizer Agent | Python (Gemini 3.1 Flash-Lite + `thinking_level="low"`) | Translate requirements into a typed `LobsterTrapPolicy` (passed as `response_schema`), dumped to YAML. Per-agent `declared_intent` synthesised from a Python template. |
 | Lobster Trap | Go binary (downloaded) | Sub-millisecond DPI proxy enforcing the YAML in front of all LLM traffic. |
-| Demo Agent | Python (Gemini 2.5 Flash) | The "victim" agent for demo. Makes real LLM calls through Lobster Trap. |
-| Red Team Agent | Python (Gemini 2.5 Pro) | Generate adversarial probes against the deployed policy. Discover gaps. |
+| Demo Agent | Python (Gemini 3.1 Flash-Lite via shim) | The "victim" agent for demo. Makes real LLM calls through Lobster Trap. |
+| Red Team Agent | Python (Gemini 3.1 Pro Preview) | Generate adversarial probes against the deployed policy. Discover gaps. |
 | Polaris API | Python (FastAPI) | Orchestrates the agents, persists state, streams events to the dashboard. |
 | Polaris Dashboard | TypeScript (Next.js 14) | Single-page UI for upload, live agent traffic, attack timeline, compliance report. |
 

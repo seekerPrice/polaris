@@ -2,7 +2,7 @@
 
 This is the most critical prompt in Polaris. The Synthesizer translates the Reader's policy tree into deployable Lobster Trap YAML. If this prompt is weak, the validation gate will reject every output and the project doesn't ship.
 
-Loaded at runtime by `polaris/agents/synthesizer.py`. Use `gemini-2.5-pro` (not Flash — quality matters here).
+Loaded at runtime by `polaris/agents/synthesizer.py`. Production model: **`gemini-3.1-flash-lite`** with `thinking_level="low"` (Phase 9 bake-off winner — 4.6s median, tied with `gemini-2.5-pro` at 6.0/11 LT-corpus, 2.7× faster, 5× cheaper. See `docs/MODEL_BAKEOFF.md`). Architecture is schema-first: the agent passes `LobsterTrapPolicy` as `response_schema`, gets back a typed Pydantic object directly. The "few-shot YAML examples" below remain in the system prompt as REFERENCE for what good rule shapes look like.
 
 ---
 

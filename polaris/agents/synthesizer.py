@@ -22,12 +22,12 @@ class IntentSchema(BaseModel):
     tool_intents: dict[str, IntentSchemaTool] = Field(default_factory=dict)
 
 
-# IMPORTANT: Gemini's structured output rejects open dict fields (`additionalProperties`).
-# `LLMSynthesizerOutput` is the schema sent to Gemini — yaml_text only.
-# `SynthesizerOutput` is the public type (yaml + declared_intents synthesised in Python from
-# a per-agent template, since declared_intents is deterministic per agent_id).
-class LLMSynthesizerOutput(BaseModel):
-    yaml_text: str
+# Phase 9 (2026-05-13): we now pass `LobsterTrapPolicy` directly as Gemini's response_schema.
+# The earlier `LLMSynthesizerOutput { yaml_text: str }` shape caused 3.x models to pad the
+# string value with thousands of trailing whitespace bytes, blowing the output buffer. The
+# typed nested-object schema eliminated that bloat surface (see docs/MODEL_BAKEOFF.md).
+# `SynthesizerOutput` remains the PUBLIC return type (yaml + declared_intents synthesised
+# in Python from a per-agent template, since declared_intents is deterministic per agent_id).
 
 
 class SynthesizerOutput(BaseModel):
@@ -72,7 +72,8 @@ class Synthesizer:
 
     def __init__(self, client: GeminiClient | None = None) -> None:
         from polaris.utils.gemini_client import get_client
-        self._client = client or get_client("gemini-2.5-pro")
+        # Phase 9 bake-off winner — see docs/MODEL_BAKEOFF.md.
+        self._client = client or get_client("gemini-3.1-flash-lite")
         full = _extract_prompt_body(self.PROMPT_PATH.read_text(encoding="utf-8"))
         self._initial_system_prompt = self._strip_example_5(full)
         self._regen_system_prompt = full
@@ -167,39 +168,6 @@ class Synthesizer:
                 if rule["name"] not in existing:
                     ingress.append(rule)
         return yaml.safe_dump(data, sort_keys=False, indent=2, default_flow_style=False)
-
-    @staticmethod
-    def _strip_whitespace_bloat(yaml_text: str) -> str:
-        """gemini-3.1-pro-preview occasionally pads responses with thousands of trailing
-        blank/whitespace lines that look like `\\n  \\n  \\n  …`. This causes JSON
-        truncation and inflates artifact size 10-20x. Collapse runs of >2 consecutive
-        blank/whitespace-only lines into a single blank line. YAML semantics preserved
-        (blank lines between top-level keys remain), tree structure unchanged."""
-        import re
-        cleaned = re.sub(r"(?:[ \t]*\n){3,}", "\n\n", yaml_text)
-        return cleaned.rstrip() + "\n"
-
-    @staticmethod
-    def _extract_yaml_block(raw_text: str) -> str:
-        """Pull YAML out of a free-form Gemini response. Handles ```yaml fences,
-        prefix prose, and JSON-style escaped strings (gemini-3.1-flash-lite often
-        returns YAML with literal \\n and \\\" tokens instead of actual newlines/quotes).
-        Falls through to the literal text if neither pattern matches."""
-        import re
-        # Strip code fences if present.
-        m = re.search(r"```(?:yaml|yml)?\s*\n(.*?)```", raw_text, flags=re.DOTALL)
-        if m:
-            raw_text = m.group(1)
-        # Find the YAML start (everything before `version:` is prose).
-        idx = raw_text.find("version:")
-        if idx >= 0:
-            raw_text = raw_text[idx:]
-        # Decode JSON-style escapes if the response is using literal `\n` instead of real
-        # newlines (gemini-3.1-flash-lite does this on some prompts, not others).
-        # Heuristic: more literal `\n` tokens than real newline chars → decode.
-        if raw_text.count("\\n") > max(raw_text.count("\n"), 2):
-            raw_text = raw_text.replace("\\n", "\n").replace('\\"', '"').replace("\\t", "\t").replace("\\\\", "\\")
-        return raw_text.strip() + "\n"
 
     async def process(self, tree: PolicyTree, *, max_attempts: int = 2) -> SynthesizerResult:
         """Schema-first Synthesizer (Phase 9 winner per scripts/bakeoff.py + docs/MODEL_BAKEOFF.md).
@@ -323,28 +291,31 @@ class Synthesizer:
                 "exfiltration signal is FALSE on encoded strings. A single-condition rule on "
                 "contains_obfuscation is the only way to close this gap deterministically.\n"
             )
+        from polaris.lobster.schema import LobsterTrapPolicy
         prompt = (
             f"REGENERATION MODE.\n\nPrevious policy:\n{previous_yaml}\n\n"
             f"Red Team Agent gap:\n{gap_evidence}\n"
             f"{obfuscation_hint}"
-            "Generate an updated YAML policy that closes this gap WITHOUT removing existing rules. "
-            "Add the minimal set of new rules. Return ONLY YAML — no JSON wrapper, no "
-            "markdown fences. Start with `version: \"1.0\"`. Compact, no padding.\n\n"
+            "Generate an updated LobsterTrapPolicy that closes this gap WITHOUT removing "
+            "existing rules. Add the minimal set of new rules.\n\n"
             f"Original tree:\n{tree.model_dump_json(indent=2)}"
         )
-        llm_out: LLMSynthesizerOutput = await self._client.generate(
+        policy: LobsterTrapPolicy = await self._client.generate(
             prompt=prompt,
             system_instruction=self._regen_system_prompt,
-            response_schema=LLMSynthesizerOutput,
-            model="gemini-2.5-pro",
+            response_schema=LobsterTrapPolicy,
+            model="gemini-3.1-flash-lite",
             temperature=0.1,
+            thinking={"level": "low"},
         )
-        cleaned = self._strip_whitespace_bloat(llm_out.yaml_text)
-        patched = self._inject_supplementary_rules(cleaned)
+        yaml_text = yaml.safe_dump(
+            policy.model_dump(mode="json", exclude_none=False),
+            sort_keys=False, indent=2,
+        )
+        patched = self._inject_supplementary_rules(yaml_text)
         # For obfuscation-class gaps, deterministically add the single-condition rule
         # because Gemini reliably emits compound rules per Synthesizer prompt Example 5
         # (which is correct in general but misses encoded-payload attacks).
-        prompt_lower = str(gap_evidence.get("attack_prompt", "")).lower()
         if "base64" in prompt_lower or "decode" in prompt_lower or "obfuscat" in prompt_lower:
             patched = self._inject_obfuscation_closure(patched)
         res = await validate(patched)

@@ -63,7 +63,7 @@ Milestone 3: Gemini client
   - Use google-genai SDK with JSON-mode when response_schema is provided.
   - Retry on 429/500 up to 3 times with exponential backoff.
   - Log every call (model, latency, token count) as structured JSON.
-  - Write a smoke test: generate("Say hello in JSON: {greeting: string}", "gemini-2.5-flash",
+  - Write a smoke test: generate("Say hello in JSON: {greeting: string}", "gemini-3.1-flash-lite",
     SmokeSchema) and confirm it works.
   Stop and show me the smoke test output.
 
@@ -134,7 +134,7 @@ Milestone 3: Reader implementation
   - Create the Reader class in polaris/agents/reader.py. The prompt comes from
     prompts/reader_agent.md verbatim — load it at runtime, do not inline it.
   - process(self, document_text: str) -> PolicyTree
-  - Use gemini-2.5-flash with JSON-mode, response_schema=PolicyTree.
+  - Use gemini-3.1-flash-lite with JSON-mode, response_schema=PolicyTree (per Phase 9 bake-off).
   - Retry 3x on validation failure, appending the validation error to the prompt.
 
 Milestone 4: Demo input documents
@@ -191,7 +191,7 @@ Milestone 2: Synthesizer implementation
       * yaml_text: str
       * declared_intents: dict[str, IntentSchema]
       * test_results: TestResults
-  - Use gemini-2.5-pro (not flash — quality matters here).
+  - Use gemini-3.1-flash-lite + thinking_level="low" (Phase 9 bake-off winner — see docs/MODEL_BAKEOFF.md).
   - Prompt loaded from prompts/synthesizer_agent.md, including the 5 few-shot
     YAML examples.
 
@@ -335,7 +335,7 @@ Milestone 1: Red Team Agent
   - process(self, policy_yaml: str, recent_audits: list[AuditEntry]) -> 
       AsyncIterator[Probe]
   - Each probe = an attack prompt with expected_verdict and rationale.
-  - Use gemini-2.5-pro for generation.
+  - Use gemini-3.1-pro-preview for generation (small JSON payload — 3-5 probes — keeps latency ~10s).
   - The agent runs continuously when started — yields probes every 5 seconds.
   - For each probe: submit through Demo Agent endpoint, compare actual vs
     expected verdict, emit a gap_found event if mismatched.

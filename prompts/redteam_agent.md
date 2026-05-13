@@ -2,7 +2,7 @@
 
 This file is loaded at runtime by `polaris/agents/redteam.py`. The Red Team Agent's job is to autonomously stress-test a deployed Lobster Trap policy and find gaps.
 
-Use `gemini-2.5-pro` (the variety of attack generation benefits from the better model).
+Use `gemini-3.1-pro-preview` (the variety of attack generation benefits from the strongest model; small output payload — 3-5 probes — keeps latency ~10s with no truncation risk).
 
 ---
 

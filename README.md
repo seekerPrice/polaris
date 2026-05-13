@@ -72,7 +72,7 @@ Open `http://localhost:3000` and drag `examples/soc2_excerpt.pdf` onto the uploa
 This project is built for the **Veea Trust Track** at the **TechEx Transforming Enterprise Through AI** hackathon (May 11–19, 2026).
 
 - **[Veea Lobster Trap](https://github.com/veeainc/lobstertrap)** — the deep prompt inspection proxy that Polaris programs and verifies against. We use both the policy YAML and the underused `_lobstertrap` bidirectional metadata feature for declared-vs-detected mismatch detection.
-- **[Google Gemini](https://ai.google.dev/)** — `gemini-3.1-pro-preview` powers the Synthesizer (YAML correctness) and the Red Team Agent (attack creativity). `gemini-3-flash-preview` powers the Reader (2× faster than 2.5-flash with same coverage on real compliance docs). All calls via `google-genai`.
+- **[Google Gemini](https://ai.google.dev/)** — `gemini-3.1-flash-lite` (GA since 2026-05-07) powers Reader AND Synthesizer (the latter with `thinking_level="low"`); `gemini-3.1-pro-preview` powers the Red Team Agent. Architecture is schema-first: `LobsterTrapPolicy` Pydantic class is passed as Gemini's `response_schema`, returning a typed object that we dump to YAML — no string-field bloat surface. End-to-end SOC 2 PDF → deployed firewall = **~11 seconds**. See `docs/MODEL_BAKEOFF.md` for the 48-run model selection benchmark.
 
 ## Demo
 
