@@ -21,4 +21,9 @@ async def event_stream() -> AsyncIterator[dict]:
 
 
 def sse_response() -> EventSourceResponse:
-    return EventSourceResponse(event_stream())
+    # Phase-11 deep-review I7 (api): 15s heartbeats keep idle connections alive through
+    # intermediate proxies/load balancers. Without `ping`, a 30+ second pause (e.g., the
+    # presenter talking before dragging the PDF) can drop the SSE silently — the browser
+    # auto-reconnects with a fresh subscriber queue and events emitted during the gap
+    # are lost.
+    return EventSourceResponse(event_stream(), ping=15)

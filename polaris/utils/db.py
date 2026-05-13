@@ -43,13 +43,23 @@ CREATE INDEX IF NOT EXISTS idx_audit_job ON audit_entries(job_id);
 
 async def init_db(path: Path) -> None:
     async with aiosqlite.connect(path) as db:
+        # Phase-11 deep-review I2 (api): enable WAL mode + busy_timeout so concurrent
+        # writes from `record_audit_entry` + `record_job` + `update_job` don't deadlock
+        # under Red Team burst load. Without these, SQLite uses journal mode with file
+        # locks and bursts can produce "database is locked" errors that the audit pump
+        # would swallow silently (now logged, but better not to hit them at all).
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA busy_timeout=30000")
+        await db.execute("PRAGMA synchronous=NORMAL")
         await db.executescript(_SCHEMA)
         # Phase-11 T1.B4: idempotently add policy_sha256 column to pre-existing DBs.
-        # SQLite doesn't have IF NOT EXISTS for columns; we swallow the duplicate-column error.
+        # SQLite doesn't have IF NOT EXISTS for columns; only swallow the specific
+        # "duplicate column" error so disk-full / DB-locked errors surface.
         try:
             await db.execute("ALTER TABLE jobs ADD COLUMN policy_sha256 TEXT")
-        except aiosqlite.OperationalError:
-            pass  # column already exists, expected on second boot
+        except aiosqlite.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
         await db.commit()
 
 

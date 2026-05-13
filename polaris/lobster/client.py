@@ -39,6 +39,24 @@ class LobsterTrap:
         self._proc: asyncio.subprocess.Process | None = None
         self._generation = 0
         self._lock = asyncio.Lock()
+        # Phase-11 deep-review C4: keep drain tasks so they're cancellable on stop().
+        self._drain_tasks: list[asyncio.Task] = []
+
+    @staticmethod
+    async def _drain_stream(stream: asyncio.StreamReader | None, label: str) -> None:
+        """Continuously read+discard so LT's stdout/stderr pipe buffers never fill.
+        Cancelled by `stop()` before the next spawn."""
+        if stream is None:
+            return
+        try:
+            while True:
+                line = await stream.readline()
+                if not line:
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return
 
     async def spawn(self, policy_path: Path) -> int:
         async with self._lock:
@@ -74,17 +92,34 @@ class LobsterTrap:
                 asyncio.create_task(_wait_for_ready_line(self._proc.stderr)),
                 asyncio.create_task(_wait_for_ready_line(self._proc.stdout)),
             ]
+            # Phase-11 deep-review (agents) C1: `asyncio.wait(timeout=N)` does NOT raise
+            # TimeoutError — it returns (done, pending) with `done` empty on timeout.
+            # The previous `except TimeoutError` branch was dead code, so on timeout
+            # we raised but left `self._proc` alive (zombie subprocess). Now we
+            # explicitly clean up the subprocess on ANY non-ready exit path.
+            ready = False
             try:
-                done, pending = await asyncio.wait(tasks, timeout=15, return_when=asyncio.FIRST_COMPLETED)
+                done, pending = await asyncio.wait(
+                    tasks, timeout=15, return_when=asyncio.FIRST_COMPLETED
+                )
                 for t in pending:
                     t.cancel()
-                if not done or all(not t.result() for t in done):
-                    raise RuntimeError("lobstertrap did not signal ready in 15s")
-            except asyncio.TimeoutError as e:
-                for t in tasks:
-                    t.cancel()
-                await self._stop_locked()
-                raise RuntimeError("lobstertrap did not become ready in 15s") from e
+                # Drain cancelled tasks so asyncio doesn't emit "task was destroyed
+                # but is pending" warnings on next loop iteration.
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+                ready = bool(done) and any(t.result() for t in done if not t.cancelled())
+            finally:
+                if not ready:
+                    await self._stop_locked()
+            if not ready:
+                raise RuntimeError("lobstertrap did not signal ready in 15s")
+            # Phase-11 deep-review (api) C4: drain stdout + stderr after readiness so
+            # LT's slog doesn't block on a full pipe buffer over a long session.
+            self._drain_tasks = [
+                asyncio.create_task(self._drain_stream(self._proc.stdout, "lt.stdout")),
+                asyncio.create_task(self._drain_stream(self._proc.stderr, "lt.stderr")),
+            ]
             self._generation += 1
             return self._generation
 
@@ -97,6 +132,13 @@ class LobsterTrap:
             await self._stop_locked()
 
     async def _stop_locked(self) -> None:
+        # Cancel drain tasks BEFORE killing the process so cancellation doesn't race
+        # with a closing pipe.
+        for t in self._drain_tasks:
+            t.cancel()
+        if self._drain_tasks:
+            await asyncio.gather(*self._drain_tasks, return_exceptions=True)
+        self._drain_tasks = []
         if self._proc and self._proc.returncode is None:
             self._proc.send_signal(signal.SIGTERM)
             try:

@@ -3,13 +3,18 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import uuid
 from pathlib import Path
 from typing import Any
 
+log = logging.getLogger(__name__)
+
 # Phase-11 T1.B3: default baseline policy deployed on Synth failure / startup before
 # any compliance doc is uploaded. Known-safe; LT corpus 11/11 PASS verified.
-_DEFAULT_BASELINE_POLICY = Path("./policies/default_baseline.yaml")
+# Anchored off this file's location, not CWD, so the API still works if uvicorn is
+# launched from a non-root directory (Phase-11 deep-review I1).
+_DEFAULT_BASELINE_POLICY = Path(__file__).resolve().parents[2] / "policies" / "default_baseline.yaml"
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -39,7 +44,26 @@ _AUDIT_TASK: asyncio.Task | None = None
 # Serialise _redeploy across concurrent uploads — two browser tabs uploading
 # back-to-back would otherwise fight for _AUDIT_TASK + LT.reload sequencing.
 _REDEPLOY_LOCK = asyncio.Lock()
-_ATTEMPTED: list[str] = []
+# Phase-11 deep-review C2 (api): keep strong references to fire-and-forget tasks
+# (red team loops, regen pipelines) so asyncio doesn't GC them mid-execution.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_background(coro, label: str) -> asyncio.Task:
+    """Create a task we will not await, but keep a strong ref + log failures."""
+    t = asyncio.create_task(coro, name=label)
+    _BACKGROUND_TASKS.add(t)
+
+    def _done(task: asyncio.Task) -> None:
+        _BACKGROUND_TASKS.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.error("background task %s failed: %r", label, exc)
+
+    t.add_done_callback(_done)
+    return t
 
 
 @router.get("/api/events")
@@ -108,7 +132,7 @@ async def redteam_start(job_id: str):
         raise HTTPException(404, "policy.yaml not generated yet")
     pol = pol_path.read_text()
     audits = await fetch_audit_entries(DB_PATH, limit=20)
-    asyncio.create_task(_redteam_loop(job_id, pol, audits))
+    _spawn_background(_redteam_loop(job_id, pol, audits), label=f"redteam_loop:{job_id}")
     return {"started": True}
 
 
@@ -124,10 +148,14 @@ async def _redeploy(job_id: str, policy_path: Path) -> int:
             _AUDIT_TASK.cancel()
             try:
                 await _AUDIT_TASK
-            except (asyncio.CancelledError, Exception):
-                pass
+            except asyncio.CancelledError:
+                pass  # expected when we cancel
+            except Exception as exc:
+                # Phase-11 deep-review C1 (api): log instead of silently swallowing.
+                # A crashed audit pump used to take the dashboard dark with no signal.
+                log.error("prior audit pump crashed: %r", exc)
         gen = await LT.reload(policy_path)
-        _AUDIT_TASK = asyncio.create_task(_pump_audit_log(job_id, gen))
+        _AUDIT_TASK = asyncio.create_task(_pump_audit_log(job_id, gen), name=f"audit:{job_id}:{gen}")
         await BUS.publish({"type": "lobstertrap_deployed", "job_id": job_id, "generation": gen})
         return gen
 
@@ -168,14 +196,16 @@ async def _pipeline(job_id: str, file_path: Path) -> None:
 
     if syn.passed:
         # Phase-11 T1.B4: compute SHA-256 of the deployed YAML for audit-defensibility.
+        # Phase-11 deep-review I5: publish policy_hash AFTER successful deploy so the
+        # dashboard's "audit-defensible" claim only renders when the proxy is actually live.
         policy_sha = hashlib.sha256(syn.output.yaml_text.encode("utf-8")).hexdigest()[:12]
         await update_job(DB_PATH, job_id, policy_sha256=policy_sha)
-        await BUS.publish({"type": "policy_hash", "job_id": job_id, "sha256": policy_sha})
         await _redeploy(job_id, job_dir / "policy.yaml")
+        await BUS.publish({"type": "policy_hash", "job_id": job_id, "sha256": policy_sha})
     else:
-        # Phase-11 T1.B3: Synth validation failed (3 retries exhausted). Deploy the
-        # default baseline so the proxy doesn't end up in an undefined state. Surfaced
-        # to the dashboard so the operator knows we fell back.
+        # Phase-11 T1.B3: Synth validation failed. Deploy the default baseline so the
+        # proxy doesn't end up in an undefined state. Surfaced to the dashboard so the
+        # operator knows we fell back.
         if _DEFAULT_BASELINE_POLICY.exists():
             await BUS.publish({
                 "type": "synthesizer_progress", "job_id": job_id,
@@ -183,6 +213,14 @@ async def _pipeline(job_id: str, file_path: Path) -> None:
                 "summary": "Synth validation failed; deploying policies/default_baseline.yaml",
             })
             await _redeploy(job_id, _DEFAULT_BASELINE_POLICY)
+        else:
+            # Phase-11 deep-review I1 (api): explicit signal when the fallback file is missing.
+            log.error("Synth failed AND default baseline missing at %s — proxy left in undefined state", _DEFAULT_BASELINE_POLICY)
+            await BUS.publish({
+                "type": "synthesizer_progress", "job_id": job_id,
+                "status": "fallback_unavailable",
+                "summary": f"Synth failed; baseline missing at {_DEFAULT_BASELINE_POLICY}",
+            })
 
 
 # Intent categories whose detection should trip a mismatch alarm if the agent's
@@ -265,31 +303,45 @@ def _normalize_mismatches(value: Any) -> list[str]:
 
 
 async def _pump_audit_log(job_id: str, generation: int) -> None:
+    """Stream LT audit JSONL → DB + SSE bus. Each iteration is wrapped so one bad
+    line can't kill the whole pump (Phase-11 deep-review C1)."""
     async for entry in LT.tail_audit_log(generation=generation):
-        raw = entry.raw
-        # Phase-11: alias LT's snake-cased field names so the dashboard's TypeScript
-        # `AuditEntry` type renders them. LT emits `metadata` + `declared_headers`; the
-        # dashboard expects `detected` + `declared`. Pre-existing bug — the audit panel's
-        # detected/declared sections never rendered because the field names didn't match.
-        if "metadata" in raw and "detected" not in raw:
-            raw["detected"] = raw["metadata"]
-        if "declared_headers" in raw and "declared" not in raw:
-            raw["declared"] = raw["declared_headers"]
-        # Phase-11 T1.B1: augment with mismatches BEFORE persistence + publish so both
-        # the DB row and the SSE event carry the field (was previously None always).
-        # Two sources: LT's native (structured-object) emit, and our _compute_mismatches
-        # fallback. LT-native is strictly more informative (severity tag, structured
-        # declared/detected pair), so when it fires we use it AS-IS — skip the Polaris
-        # fallback to avoid surfacing the same fact twice on the dashboard.
-        lt_raw = raw.get("mismatches")
-        if lt_raw:
-            raw["mismatches"] = _normalize_mismatches(lt_raw)
-        else:
-            polaris_computed = _compute_mismatches(raw)
-            if polaris_computed:
-                raw["mismatches"] = polaris_computed
-        await record_audit_entry(DB_PATH, job_id, raw)
-        await BUS.publish({"type": "audit_log_entry", "job_id": job_id, "entry": raw})
+        try:
+            # Shallow-copy so downstream mutation (alias, mismatch) can't leak into
+            # tail_audit_log's internal state (Phase-11 deep-review C3).
+            raw = dict(entry.raw)
+            # Phase-11 deep-review C1 (dashboard): the demo's "DENY flash" beat depended
+            # on the dashboard reading `verdict` + `matched_rule`, but LT actually emits
+            # `action` + `rule_name`. Alias here so the existing TS `AuditEntry` type
+            # renders correctly AND `record_audit_entry`'s `raw.get("verdict")` populates
+            # the DB column (was always NULL before). This unblocks demo beat 6.
+            if "action" in raw and "verdict" not in raw:
+                raw["verdict"] = raw["action"]
+            if "rule_name" in raw and "matched_rule" not in raw:
+                raw["matched_rule"] = raw["rule_name"]
+            # Phase-11: alias LT's snake-cased field names so the dashboard's TypeScript
+            # `AuditEntry` type renders them. LT emits `metadata` + `declared_headers`;
+            # dashboard expects `detected` + `declared`.
+            if "metadata" in raw and "detected" not in raw:
+                raw["detected"] = raw["metadata"]
+            if "declared_headers" in raw and "declared" not in raw:
+                raw["declared"] = raw["declared_headers"]
+            # Phase-11 T1.B1: augment with mismatches BEFORE persistence + publish.
+            # LT-native (structured-object) emit takes priority — it's strictly more
+            # informative than the Polaris fallback string format.
+            lt_raw = raw.get("mismatches")
+            if lt_raw:
+                raw["mismatches"] = _normalize_mismatches(lt_raw)
+            else:
+                polaris_computed = _compute_mismatches(raw)
+                if polaris_computed:
+                    raw["mismatches"] = polaris_computed
+            await record_audit_entry(DB_PATH, job_id, raw)
+            await BUS.publish({"type": "audit_log_entry", "job_id": job_id, "entry": raw})
+        except Exception as exc:
+            # Phase-11 deep-review C1 (api): one bad line must not kill the pump.
+            log.error("audit pump skipped malformed entry: %r", exc)
+            continue
 
 
 async def _redteam_loop(job_id: str, policy_yaml: str, audits: list[dict]) -> None:
@@ -306,20 +358,31 @@ async def _redteam_loop(job_id: str, policy_yaml: str, audits: list[dict]) -> No
                 "is_gap": result.is_gap,
             },
         })
-        _ATTEMPTED.append(probe.prompt[:200])
         if result.is_gap:
-            await _patch_policy(job_id, gap_evidence={
+            patched = await _patch_policy(job_id, gap_evidence={
                 "attack_prompt": probe.prompt,
                 "expected": probe.expected_verdict,
                 "actual": result.actual_verdict,
             })
+            if not patched:
+                # Phase-11 deep-review I10: don't fire the next probe against the OLD
+                # vulnerable policy — that produces two consecutive GAPs and breaks
+                # the demo narrative without surfacing the regen failure.
+                await BUS.publish({
+                    "type": "redteam_aborted", "job_id": job_id,
+                    "reason": "regen_failed",
+                })
+                break
             # Give LT a moment to fully come up after the hot-reload before firing
             # the next probe — otherwise probe 3 races against LT.spawn() and gets
             # a ConnectError instead of the expected DENY.
             await asyncio.sleep(2)
 
 
-async def _patch_policy(job_id: str, gap_evidence: dict) -> None:
+async def _patch_policy(job_id: str, gap_evidence: dict) -> bool:
+    """Regenerate the policy with gap evidence, redeploy if validation passes.
+    Returns True if the regen succeeded and a fresh policy is live; False otherwise.
+    Caller should not fire the next probe on False (Phase-11 deep-review I10)."""
     job_dir = ARTIFACTS / job_id
     tree = PolicyTree.model_validate_json((job_dir / "policy_tree.json").read_text())
     prev_yaml = (job_dir / "policy.yaml").read_text()
@@ -330,7 +393,20 @@ async def _patch_policy(job_id: str, gap_evidence: dict) -> None:
             "type": "synthesizer_progress", "job_id": job_id, "status": "regen_failed",
             "summary": syn.test_results_summary,
         })
-        return
+        return False
     (job_dir / "policy.yaml").write_text(syn.output.yaml_text)
+    # Phase-11 deep-review C2 (dashboard): clear prior YAML + emit a second
+    # `synthesizer_progress.completed` so the dashboard's YAML streamer re-fires
+    # for the regenerated policy (demo beat 9 — "auto-patch visible"). Also bump
+    # the policy hash so the audit-defensibility badge shows the new SHA.
+    await BUS.publish({"type": "yaml_reset", "job_id": job_id})
+    await BUS.publish({
+        "type": "synthesizer_progress", "job_id": job_id, "status": "completed",
+        "passed": True,
+    })
+    new_sha = hashlib.sha256(syn.output.yaml_text.encode("utf-8")).hexdigest()[:12]
+    await update_job(DB_PATH, job_id, policy_sha256=new_sha)
     await _redeploy(job_id, job_dir / "policy.yaml")
+    await BUS.publish({"type": "policy_hash", "job_id": job_id, "sha256": new_sha})
     await BUS.publish({"type": "lobstertrap_reloaded", "job_id": job_id})
+    return True

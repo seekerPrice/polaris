@@ -133,8 +133,25 @@ class GeminiClient:
                 return resp.text
             except Exception as e:
                 last_err = e
+                # Phase-11 deep-review (agents) C4: substring-on-`.lower()` missed real
+                # google-genai exception text (`ResourceExhausted`, `DeadlineExceeded`,
+                # httpx `ReadTimeout`/`ConnectError`, etc.). Combine class-name check,
+                # numeric code attribute, and substring fallback.
+                cls_name = e.__class__.__name__
+                code = getattr(e, "code", None) or getattr(e, "status_code", None)
                 msg = str(e).lower()
-                transient = any(s in msg for s in ("429", "500", "502", "503", "504", "timeout"))
+                transient_cls = cls_name in {
+                    "ResourceExhausted", "ServerError", "ServiceUnavailable",
+                    "DeadlineExceeded", "InternalServerError", "BadGateway",
+                    "GatewayTimeout", "RetryError", "ReadTimeout", "ConnectTimeout",
+                    "ReadError", "ConnectError", "RemoteProtocolError",
+                }
+                transient_code = isinstance(code, int) and code in {429, 500, 502, 503, 504}
+                transient_msg = any(s in msg for s in (
+                    "429", "500", "502", "503", "504", "timeout",
+                    "rate limit", "resource_exhausted", "deadline", "unavailable",
+                ))
+                transient = transient_cls or transient_code or transient_msg
                 if not transient or attempt == self._max_retries:
                     log.error(json.dumps({
                         "evt": "gemini_failed",

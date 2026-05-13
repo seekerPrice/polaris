@@ -119,6 +119,10 @@ function reducer(s: State, ev: Action): State {
       return { ...s, synth: { ...s.synth, yaml: "" } };
     case "policy_hash":
       return { ...s, policyHash: ev.sha256 };
+    case "redteam_aborted": {
+      const v: ProbeView = { phase: "result", attack_category: `aborted: ${ev.reason}` };
+      return { ...s, probes: [v, ...s.probes].slice(0, 50) };
+    }
     default:
       return s;
   }
@@ -159,10 +163,23 @@ export default function Page() {
           }
           const data = (await r.json()) as { job_id: string; events: unknown[] };
           dispatch({ type: "set_job", jobId: data.job_id });
-          // Replay events with realistic spacing — match recorded ~11s pacing
+          // Replay events with realistic spacing — match recorded ~11s pacing.
           const SPACING_MS = 350;
           for (const ev of data.events) {
             await new Promise((res) => setTimeout(res, SPACING_MS));
+            // Phase-11 deep-review C3 (dashboard): old replay fixtures captured RAW
+            // LT field names (`action`, `rule_name`, `metadata`, `declared_headers`).
+            // Production path now aliases these in `_pump_audit_log`; mirror that
+            // aliasing client-side so old fixtures keep rendering correctly without
+            // forcing a re-capture for every backend change.
+            const e = ev as Record<string, unknown> & { type?: string; entry?: Record<string, unknown> };
+            if (e?.type === "audit_log_entry" && e.entry && typeof e.entry === "object") {
+              const entry = e.entry as Record<string, unknown>;
+              if ("action" in entry && !("verdict" in entry)) entry.verdict = entry.action;
+              if ("rule_name" in entry && !("matched_rule" in entry)) entry.matched_rule = entry.rule_name;
+              if ("metadata" in entry && !("detected" in entry)) entry.detected = entry.metadata;
+              if ("declared_headers" in entry && !("declared" in entry)) entry.declared = entry.declared_headers;
+            }
             dispatch(ev as Action);
           }
         } catch (err) {
@@ -176,9 +193,17 @@ export default function Page() {
 
   // Phase-10 T2.3 — play soft chime when Synthesizer completes (DEMO_SCRIPT beat 4).
   // chime.mp3 is CC0; drop one into dashboard/public/chime.mp3. If missing, fails silently.
+  // Phase-11 deep-review C2 (dashboard): also chime on `started` → `completed` transition
+  // for regen, so the patch beat (demo beat 9) has an audio cue too. Guard resets when
+  // synth re-enters `started` (regenerating) so chime can replay on the second `completed`.
   const chimePlayed = useRef(false);
   useEffect(() => {
-    if (state.synth.status !== "completed" || chimePlayed.current) return;
+    const status = state.synth.status;
+    if (status === "started" || status === "regenerating") {
+      chimePlayed.current = false;
+      return;
+    }
+    if (status !== "completed" || chimePlayed.current) return;
     chimePlayed.current = true;
     try {
       const audio = new Audio("/chime.mp3");
@@ -192,10 +217,17 @@ export default function Page() {
     if (state.jobId === null) chimePlayed.current = false;
   }, [state.jobId]);
 
-  // Demo beat 3: stream YAML line-by-line after Synthesizer reports completed.
+  // Demo beat 3 + 9: stream YAML line-by-line after Synthesizer reports completed,
+  // AND re-stream on regen ("reloaded"). Phase-11 deep-review M9: omit
+  // `state.synth.yaml` from deps — it's a write target of this effect, including
+  // it caused the cleanup to fire on every chunk dispatch and (depending on React
+  // scheduling) could halt the streamer mid-flow.
   useEffect(() => {
-    if (state.synth.status !== "completed" && state.synth.status !== "deployed") return;
-    if (!state.jobId || state.synth.yaml || yamlAnimating.current) return;
+    const status = state.synth.status;
+    const isStreamableStatus =
+      status === "completed" || status === "deployed" || status === "reloaded";
+    if (!isStreamableStatus) return;
+    if (!state.jobId || yamlAnimating.current) return;
     yamlAnimating.current = true;
     let cancelled = false;
     (async () => {
@@ -206,12 +238,13 @@ export default function Page() {
         await new Promise((r) => setTimeout(r, 60));
         dispatch({ type: "yaml_chunk", chunk: line + "\n" });
       }
+      yamlAnimating.current = false;
     })();
     return () => {
       cancelled = true;
-      yamlAnimating.current = false;
     };
-  }, [state.synth.status, state.jobId, state.synth.yaml]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.synth.status, state.jobId]);
 
   async function onDrop(e: React.DragEvent) {
     e.preventDefault();

@@ -195,12 +195,14 @@ class Synthesizer:
         """Parse the LLM YAML, append our supplementary rules to ingress_rules + egress_rules, re-dump.
         Bullet-proof against indent variance (col-0 vs col-2 list items).
 
-        Phase-10 T1.1: also injects egress rules from `_SUPPLEMENTARY_EGRESS_RULES`."""
+        Phase-10 T1.1: also injects egress rules from `_SUPPLEMENTARY_EGRESS_RULES`.
+        Phase-11 deep-review C3 (agents): idempotency check uses parsed rule names,
+        not raw substring (a description quoting our marker name used to short-circuit).
+        Phase-11 deep-review C5 (agents): deep-copy class-level rule dicts before
+        appending so callers can't mutate the shared template."""
+        import copy
         import yaml
 
-        # Idempotency check: if any of our marker rule names are already present, skip both blocks.
-        if "polaris_baseline_block_system_commands" in yaml_text:
-            return yaml_text
         try:
             data = yaml.safe_load(yaml_text)
         except yaml.YAMLError:
@@ -210,23 +212,29 @@ class Synthesizer:
 
         # Ingress
         ingress = data.get("ingress_rules")
-        if ingress is None or not isinstance(ingress, list):
-            data["ingress_rules"] = list(cls._SUPPLEMENTARY_RULES)
+        existing_ing = (
+            {r.get("name") for r in ingress if isinstance(r, dict)}
+            if isinstance(ingress, list) else set()
+        )
+        # Skip both blocks idempotently if our marker rule is already present BY NAME.
+        if "polaris_baseline_block_system_commands" in existing_ing:
+            return yaml_text
+        if not isinstance(ingress, list):
+            data["ingress_rules"] = [copy.deepcopy(r) for r in cls._SUPPLEMENTARY_RULES]
         else:
-            existing = {r.get("name") for r in ingress if isinstance(r, dict)}
             for rule in cls._SUPPLEMENTARY_RULES:
-                if rule["name"] not in existing:
-                    ingress.append(rule)
+                if rule["name"] not in existing_ing:
+                    ingress.append(copy.deepcopy(rule))
 
         # Egress (Phase-10 T1.1 addition)
         egress = data.get("egress_rules")
-        if egress is None or not isinstance(egress, list):
-            data["egress_rules"] = list(cls._SUPPLEMENTARY_EGRESS_RULES)
+        if not isinstance(egress, list):
+            data["egress_rules"] = [copy.deepcopy(r) for r in cls._SUPPLEMENTARY_EGRESS_RULES]
         else:
             existing_eg = {r.get("name") for r in egress if isinstance(r, dict)}
             for rule in cls._SUPPLEMENTARY_EGRESS_RULES:
                 if rule["name"] not in existing_eg:
-                    egress.append(rule)
+                    egress.append(copy.deepcopy(rule))
 
         return yaml.safe_dump(data, sort_keys=False, indent=2, default_flow_style=False)
 
@@ -317,10 +325,10 @@ class Synthesizer:
     @classmethod
     def _inject_obfuscation_closure(cls, yaml_text: str) -> str:
         """Idempotently splice the single-condition obfuscation rule into ingress_rules.
-        Used by regenerate() when the gap is obfuscation-class."""
+        Used by regenerate() when the gap is obfuscation-class. Phase-11 deep-review C5:
+        deep-copy the class-level template before append so callers can't mutate it."""
+        import copy
         import yaml as _yaml
-        if cls._OBFUSCATION_CLOSURE_RULE["name"] in yaml_text:
-            return yaml_text
         try:
             data = _yaml.safe_load(yaml_text)
         except _yaml.YAMLError:
@@ -330,7 +338,11 @@ class Synthesizer:
         ingress = data.get("ingress_rules") or []
         if not isinstance(ingress, list):
             return yaml_text
-        ingress.append(cls._OBFUSCATION_CLOSURE_RULE)
+        # Idempotency check by parsed name, not raw substring.
+        existing = {r.get("name") for r in ingress if isinstance(r, dict)}
+        if cls._OBFUSCATION_CLOSURE_RULE["name"] in existing:
+            return yaml_text
+        ingress.append(copy.deepcopy(cls._OBFUSCATION_CLOSURE_RULE))
         data["ingress_rules"] = ingress
         return _yaml.safe_dump(data, sort_keys=False, indent=2, default_flow_style=False)
 
