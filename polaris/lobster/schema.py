@@ -7,14 +7,16 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Action(str, Enum):
+    """Lobster Trap actions Polaris emits. MODIFY and REDIRECT are RESERVED per
+    LOBSTER_TRAP_REFERENCE.md §4 — REMOVED from the enum so Gemini's structured-output
+    schema doesn't include them and the model never tries to emit them."""
+
     ALLOW = "ALLOW"
     DENY = "DENY"
     LOG = "LOG"
     HUMAN_REVIEW = "HUMAN_REVIEW"
-    MODIFY = "MODIFY"
     QUARANTINE = "QUARANTINE"
     RATE_LIMIT = "RATE_LIMIT"
-    REDIRECT = "REDIRECT"
 
 
 class MatchType(str, Enum):
@@ -47,7 +49,10 @@ INTENT_CATEGORIES = frozenset({
 class Condition(BaseModel):
     field: str
     match_type: MatchType
-    value: Any
+    # Gemini structured-output rejects `Any` (no `type` key in JSON schema). Use a union
+    # of all the concrete value types LT match_types accept: bool (boolean), str (exact/
+    # prefix/glob/regex/contains/range), int+float (threshold), None (rare/optional).
+    value: str | bool | int | float | None = None
     negate: bool = False
 
     @field_validator("field")
@@ -58,7 +63,9 @@ class Condition(BaseModel):
         return v
 
 
-_RESERVED_ACTIONS = {Action.MODIFY, Action.REDIRECT}
+# MODIFY/REDIRECT removed from Action enum entirely — Gemini sees the schema's
+# enum constants and would otherwise emit them, blowing up our validator. Removing
+# from the enum is cleaner than rejecting them post-hoc.
 
 
 class Rule(BaseModel):
@@ -73,12 +80,6 @@ class Rule(BaseModel):
     def _deny_needs_message(self):
         if self.action == Action.DENY and not self.deny_message:
             raise ValueError("DENY action requires deny_message")
-        return self
-
-    @model_validator(mode="after")
-    def _no_reserved_actions(self):
-        if self.action in _RESERVED_ACTIONS:
-            raise ValueError(f"action {self.action.value} is reserved, do not emit")
         return self
 
 

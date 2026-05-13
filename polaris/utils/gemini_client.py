@@ -77,23 +77,33 @@ class GeminiClient:
         response_schema: type[BaseModel] | None = None,
         temperature: float = 0.1,
         system_instruction: str | None = None,
+        thinking: dict | None = None,
     ) -> Any:
         """Generate content. Returns parsed Pydantic instance if response_schema is provided,
         else returns the raw .text string. Retries on transient errors only.
+
+        `thinking` controls Gemini's extended-thinking feature:
+          - {"budget": N} for 2.5-family (e.g. {"budget": 0} disables thinking)
+          - {"level": "minimal"|"low"|"medium"|"high"} for 3.x-family
+          - None = use the model's default (8192 tokens for 2.5; medium for 3.x)
         """
+        from google.genai import types
+
         chosen_model = model or self._default_model
-        # 32K output budget. Gemini 2.5/3.1 Pro models emit implicit "thinking" tokens
-        # that count against this budget. 3.1-pro-preview specifically has been observed
-        # to pad responses with thousands of trailing-whitespace newlines (the "86KB
-        # bloat" bug); 32K gives that pathology room to land WITHOUT truncating the
-        # actual JSON payload, AND the post-process strip in Synthesizer / Reader cleans
-        # the whitespace. Max per Gemini docs is 65536; 32K leaves headroom.
+        # 32K output budget — leaves headroom for thinking + output even on the strongest
+        # models. Max per Gemini docs is 65536; 65K caps protect against the trailing-
+        # whitespace bloat bug observed in early 3.x preview models.
         config: dict[str, Any] = {"temperature": temperature, "max_output_tokens": 65536}
         if system_instruction:
             config["system_instruction"] = system_instruction
         if response_schema is not None:
             config["response_mime_type"] = "application/json"
             config["response_schema"] = response_schema
+        if thinking:
+            if "budget" in thinking:
+                config["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking["budget"])
+            elif "level" in thinking:
+                config["thinking_config"] = types.ThinkingConfig(thinking_level=thinking["level"])
 
         last_err: Exception | None = None
         for attempt in range(1, self._max_retries + 1):

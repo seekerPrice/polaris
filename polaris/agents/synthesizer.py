@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import yaml
 from pydantic import BaseModel, Field
 
 from polaris.agents.reader import PolicyTree, _extract_prompt_body
@@ -201,36 +202,53 @@ class Synthesizer:
         return raw_text.strip() + "\n"
 
     async def process(self, tree: PolicyTree, *, max_attempts: int = 2) -> SynthesizerResult:
+        """Schema-first Synthesizer (Phase 9 winner per scripts/bakeoff.py + docs/MODEL_BAKEOFF.md).
+
+        Bake-off (48 runs across 8 configs): gemini-3.1-flash-lite + thinking_level="low"
+        wins on CP — 4.6s median, 6.0/11 intrinsic LT-corpus pass (tied with the best
+        Pro config), 2.7× faster than Pro 1024, 5× cheaper. More thinking didn't help
+        (Pro 8192 = 5.0/11 vs Pro 1024 = 6.0/11; thinking-level=high on Lite is a 30×
+        latency trap for zero quality gain).
+
+        Architecture: pass LobsterTrapPolicy as response_schema. Gemini returns a typed
+        Pydantic instance. yaml.safe_dump → inject 5 supplementary baseline rules → validate.
+        Eliminates the yaml_text-as-string-field bloat that plagued the earlier approach.
+        """
+        from polaris.lobster.schema import LobsterTrapPolicy
         from polaris.utils.gemini_client import GeminiCallError
 
-        # Default: gemini-2.5-pro with structured output. Reliability over novelty.
-        # Tested 3.x alternatives all failed: 3.1-pro-preview ~110s+ (breaks hero metric);
-        # 3.1-flash-lite/3-flash-preview produce malformed YAML on ~50% of runs.
-        # 2.5-pro: 30-60s, valid YAML every run. The "too old" critique is real but the
-        # demo-recording reliability outweighs the version-number narrative.
-        prompt = self._initial_prompt(tree)
+        prompt = (
+            "PolicyTree input:\n\n" + tree.model_dump_json(indent=2) +
+            "\n\nReturn a LobsterTrapPolicy. Cover the policy_tree's requirements; produce "
+            "as many ingress_rules as the requirements imply. Use unique rule names."
+        )
         last: TestResults | None = None
-        last_llm_out: LLMSynthesizerOutput | None = None
+        last_yaml = ""
         for attempt in range(1, max_attempts + 1):
             try:
-                llm_out: LLMSynthesizerOutput = await self._client.generate(
+                policy: LobsterTrapPolicy = await self._client.generate(
                     prompt=prompt,
                     system_instruction=self._initial_system_prompt,
-                    response_schema=LLMSynthesizerOutput,
-                    model="gemini-2.5-pro",
+                    response_schema=LobsterTrapPolicy,
+                    model="gemini-3.1-flash-lite",
                     temperature=0.1,
+                    thinking={"level": "low"},
                 )
             except GeminiCallError as e:
                 if attempt == max_attempts:
                     raise
-                prompt = self._initial_prompt(tree) + (
+                prompt = (
+                    "PolicyTree input:\n\n" + tree.model_dump_json(indent=2) +
                     f"\n\nPREVIOUS ATTEMPT FAILED: {str(e)[:300]}\n"
-                    "Return COMPACT YAML, under 4000 chars, no padding."
+                    "Return a LobsterTrapPolicy with unique rule names."
                 )
                 continue
-            last_llm_out = llm_out
-            cleaned_yaml = self._strip_whitespace_bloat(llm_out.yaml_text)
-            patched_yaml = self._inject_supplementary_rules(cleaned_yaml)
+            yaml_text = yaml.safe_dump(
+                policy.model_dump(mode="json", exclude_none=False),
+                sort_keys=False, indent=2,
+            )
+            patched_yaml = self._inject_supplementary_rules(yaml_text)
+            last_yaml = patched_yaml
             res = await validate(patched_yaml)
             last = res
             if res.passed:
@@ -245,7 +263,7 @@ class Synthesizer:
             prompt = self._retry_prompt(tree, patched_yaml, res)
         return SynthesizerResult(
             output=SynthesizerOutput(
-                yaml_text=last_llm_out.yaml_text if last_llm_out else "version: '1.0'\npolicy_name: empty\n",
+                yaml_text=last_yaml or "version: '1.0'\npolicy_name: empty\n",
                 declared_intents=_default_declared_intents(),
             ),
             test_results_summary=last.summary if last else "no output",

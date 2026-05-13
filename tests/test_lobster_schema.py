@@ -42,6 +42,8 @@ def test_deny_requires_message():
 
 
 def test_modify_action_rejected():
+    """MODIFY removed from Action enum entirely (so Gemini's structured-output schema
+    doesn't include it). Validation now fails at the enum level instead of the model_validator."""
     bad = {
         "policy_name": "x",
         "ingress_rules": [{
