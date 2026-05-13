@@ -24,10 +24,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="polaris-api", lifespan=lifespan)
+# Demo posture: allow any origin so judges can pull the dashboard from any device on the
+# demo network. Revert to ["http://localhost:3000"] for any post-hackathon shipping work.
+# Note: when allow_origins=["*"], allow_credentials must be False (CORS spec).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

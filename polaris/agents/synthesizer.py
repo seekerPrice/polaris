@@ -42,6 +42,7 @@ class SynthesizerResult(BaseModel):
 
 
 # Per-agent declared_intent template. See prompts/synthesizer_agent.md "Declared intents schema".
+# TODO(v0.2): per-agent learned schemas; v0.1 demo ships with one persona (sales-ops-copilot-v1).
 def _default_declared_intents() -> dict[str, IntentSchema]:
     return {
         "sales-ops-copilot-v1": IntentSchema(
@@ -95,6 +96,10 @@ class Synthesizer:
     # field-level signals (target_domains) more reliable than the contains_exfiltration
     # boolean which gets diluted on >100-token prompts. Each paste-site is a separate
     # rule (LT conditions AND within a rule, so we need one rule per OR-domain).
+    #
+    # Phase-10 plan T1.1: added Rule A (HUMAN_REVIEW + threshold) and Rule B (RATE_LIMIT
+    # + threshold) to exercise more of LT's action+match_type surface — judging criterion
+    # #1 ("model integration depth"). Rules drop automatically if any breaks the LT corpus.
     _SUPPLEMENTARY_RULES: list[dict] = [
         # Lobster Trap's built-in adversarial corpus (`lobstertrap test`) expects DENY for
         # dangerous system commands and sensitive-path access. If the Reader marks these
@@ -116,6 +121,28 @@ class Synthesizer:
             "action": "DENY",
             "deny_message": "[POLARIS-BASELINE] Blocked: sensitive path access denied.",
             "conditions": [{"field": "contains_sensitive_paths", "match_type": "boolean", "value": True}],
+        },
+        # Phase-10 Rule A — HUMAN_REVIEW + threshold on risk_score.
+        # Threshold 0.85 is high enough to skip benign corpus prompts (typical risk <0.5)
+        # while flagging genuinely-risky novel inputs (e.g., heavily-loaded role-impersonation).
+        # Demonstrates LT's HUMAN_REVIEW action (criterion #1 surface), maps to NIST AI RMF
+        # GOVERN-3.2 (human-in-the-loop on high-risk actions). If corpus breaks, raise to 0.9.
+        {
+            "name": "polaris_baseline_human_review_high_risk",
+            "description": "Pause for human review when LT's risk_score >= 0.85 (NIST AI RMF GOVERN-3.2)",
+            "priority": 994,
+            "action": "HUMAN_REVIEW",
+            "conditions": [{"field": "risk_score", "match_type": "threshold", "value": 0.85}],
+        },
+        # Phase-10 Rule B — RATE_LIMIT + threshold on token_count.
+        # Token-bomb DoS mitigation: long prompts that would burn LLM context budget.
+        # 2000 tokens ≈ 8000 chars — well above corpus prompts (typically <500 chars).
+        {
+            "name": "polaris_baseline_rate_limit_token_bomb",
+            "description": "Rate-limit prompts >2000 tokens (DoS mitigation, NIST AI RMF MEASURE-2.6)",
+            "priority": 996,
+            "action": "RATE_LIMIT",
+            "conditions": [{"field": "token_count", "match_type": "threshold", "value": 2000}],
         },
         # Field-level paste-site rules (defense in depth — robust against LT's
         # exfiltration-signal dilution on long prompts).
@@ -145,12 +172,30 @@ class Synthesizer:
         },
     ]
 
+    # Phase-10 Rule C — paste-site egress block (mirrors ingress paste-site rules on the
+    # response side). Populates egress_rules so the policy exercises both directions
+    # of LT's DPI surface. `target_domains` is conservative on egress (extracted from
+    # the model output), so benign LLM responses won't trip this.
+    _SUPPLEMENTARY_EGRESS_RULES: list[dict] = [
+        {
+            "name": "polaris_baseline_block_paste_site_egress",
+            "description": "Block model outputs referencing exfiltration paste sites (mirrors ingress paste-site block)",
+            "priority": 999,
+            "action": "DENY",
+            "deny_message": "[POLARIS-EGRESS] Blocked: outbound references known exfiltration domain.",
+            "conditions": [{"field": "target_domains", "match_type": "contains", "value": "pastebin.com"}],
+        },
+    ]
+
     @classmethod
     def _inject_supplementary_rules(cls, yaml_text: str) -> str:
-        """Parse the LLM YAML, append our supplementary rules to ingress_rules, re-dump.
-        Bullet-proof against indent variance (col-0 vs col-2 list items)."""
+        """Parse the LLM YAML, append our supplementary rules to ingress_rules + egress_rules, re-dump.
+        Bullet-proof against indent variance (col-0 vs col-2 list items).
+
+        Phase-10 T1.1: also injects egress rules from `_SUPPLEMENTARY_EGRESS_RULES`."""
         import yaml
 
+        # Idempotency check: if any of our marker rule names are already present, skip both blocks.
         if "polaris_baseline_block_system_commands" in yaml_text:
             return yaml_text
         try:
@@ -159,6 +204,8 @@ class Synthesizer:
             return yaml_text  # let the validator surface the parse error
         if not isinstance(data, dict):
             return yaml_text
+
+        # Ingress
         ingress = data.get("ingress_rules")
         if ingress is None or not isinstance(ingress, list):
             data["ingress_rules"] = list(cls._SUPPLEMENTARY_RULES)
@@ -167,6 +214,17 @@ class Synthesizer:
             for rule in cls._SUPPLEMENTARY_RULES:
                 if rule["name"] not in existing:
                     ingress.append(rule)
+
+        # Egress (Phase-10 T1.1 addition)
+        egress = data.get("egress_rules")
+        if egress is None or not isinstance(egress, list):
+            data["egress_rules"] = list(cls._SUPPLEMENTARY_EGRESS_RULES)
+        else:
+            existing_eg = {r.get("name") for r in egress if isinstance(r, dict)}
+            for rule in cls._SUPPLEMENTARY_EGRESS_RULES:
+                if rule["name"] not in existing_eg:
+                    egress.append(rule)
+
         return yaml.safe_dump(data, sort_keys=False, indent=2, default_flow_style=False)
 
     async def process(self, tree: PolicyTree, *, max_attempts: int = 2) -> SynthesizerResult:

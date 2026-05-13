@@ -21,6 +21,7 @@ type State = {
   synth: { status: string; yaml: string; passed: boolean | null };
   audits: AuditEntry[];
   probes: ProbeView[];
+  timing: { startedAt: number | null; deployedMs: number | null };
 };
 
 type Action =
@@ -35,12 +36,13 @@ const init: State = {
   synth: { status: "idle", yaml: "", passed: null },
   audits: [],
   probes: [],
+  timing: { startedAt: null, deployedMs: null },
 };
 
 function reducer(s: State, ev: Action): State {
   switch (ev.type) {
     case "set_job":
-      return { ...init, jobId: ev.jobId };
+      return { ...init, jobId: ev.jobId, timing: { startedAt: Date.now(), deployedMs: null } };
     case "reader_progress":
       return { ...s, reader: { status: ev.status, n: ev.n_requirements ?? s.reader.n } };
     case "synthesizer_progress":
@@ -48,8 +50,17 @@ function reducer(s: State, ev: Action): State {
         ...s,
         synth: { ...s.synth, status: ev.status, passed: ev.passed ?? s.synth.passed },
       };
-    case "lobstertrap_deployed":
-      return { ...s, synth: { ...s.synth, status: "deployed" } };
+    case "lobstertrap_deployed": {
+      const deployedMs =
+        s.timing.startedAt !== null && s.timing.deployedMs === null
+          ? Date.now() - s.timing.startedAt
+          : s.timing.deployedMs;
+      return {
+        ...s,
+        synth: { ...s.synth, status: "deployed" },
+        timing: { ...s.timing, deployedMs },
+      };
+    }
     case "lobstertrap_reloaded":
       return { ...s, synth: { ...s.synth, status: "reloaded" } };
     case "audit_log_entry":
@@ -93,6 +104,57 @@ export default function Page() {
     return () => es.close();
   }, []);
 
+  // Stage-day fallback: Cmd+Shift+P (P = Polaris) replays a pre-captured run from
+  // dashboard/public/precomputed_run.json without needing Gemini or Lobster Trap live.
+  // Cmd+Shift+R is intentionally NOT used because Chrome reserves it for hard-reload.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const isReplay =
+        (e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "P" || e.key === "p");
+      if (!isReplay) return;
+      e.preventDefault();
+      (async () => {
+        try {
+          const r = await fetch("/precomputed_run.json");
+          if (!r.ok) {
+            alert("precomputed_run.json missing — run scripts/capture_replay.sh first");
+            return;
+          }
+          const data = (await r.json()) as { job_id: string; events: unknown[] };
+          dispatch({ type: "set_job", jobId: data.job_id });
+          // Replay events with realistic spacing — match recorded ~11s pacing
+          const SPACING_MS = 350;
+          for (const ev of data.events) {
+            await new Promise((res) => setTimeout(res, SPACING_MS));
+            dispatch(ev as Action);
+          }
+        } catch (err) {
+          alert(`Replay failed: ${err}`);
+        }
+      })();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Phase-10 T2.3 — play soft chime when Synthesizer completes (DEMO_SCRIPT beat 4).
+  // chime.mp3 is CC0; drop one into dashboard/public/chime.mp3. If missing, fails silently.
+  const chimePlayed = useRef(false);
+  useEffect(() => {
+    if (state.synth.status !== "completed" || chimePlayed.current) return;
+    chimePlayed.current = true;
+    try {
+      const audio = new Audio("/chime.mp3");
+      audio.volume = 0.4;
+      void audio.play().catch(() => { /* autoplay blocked or file missing — silent */ });
+    } catch { /* no Audio constructor (SSR?) — silent */ }
+  }, [state.synth.status]);
+
+  // Reset chime guard on new job
+  useEffect(() => {
+    if (state.jobId === null) chimePlayed.current = false;
+  }, [state.jobId]);
+
   // Demo beat 3: stream YAML line-by-line after Synthesizer reports completed.
   useEffect(() => {
     if (state.synth.status !== "completed" && state.synth.status !== "deployed") return;
@@ -104,7 +166,7 @@ export default function Page() {
       const yaml: string = j["policy.yaml"] ?? "";
       for (const line of yaml.split("\n")) {
         if (cancelled) break;
-        await new Promise((r) => setTimeout(r, 25));
+        await new Promise((r) => setTimeout(r, 60));
         dispatch({ type: "yaml_chunk", chunk: line + "\n" });
       }
     })();
@@ -194,6 +256,15 @@ export default function Page() {
                 <Badge className="bg-emerald-600">PASSED ./lobstertrap test</Badge>
               )}
             </div>
+            {state.timing.deployedMs !== null && (
+              <div>
+                End-to-end:{" "}
+                <Badge className="bg-sky-600">
+                  ~{(state.timing.deployedMs / 1000).toFixed(1)}s
+                </Badge>{" "}
+                <span className="text-[10px] text-slate-400">(SLA: 60s)</span>
+              </div>
+            )}
           </div>
           {state.jobId && (
             <Button className="mt-3" onClick={() => startRedTeam(state.jobId!)}>

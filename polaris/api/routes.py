@@ -87,8 +87,11 @@ async def compliance_report(job_id: str):
         raise HTTPException(404, "policy tree not generated yet")
     tree = PolicyTree.model_validate_json(tree_path.read_text())
     audits = await fetch_audit_entries(DB_PATH, limit=200)
+    # Phase-10 T1.2: pass deployed policy YAML so the renderer can compute control→rule mapping.
+    policy_path = job_dir / "policy.yaml"
+    policy_yaml = policy_path.read_text() if policy_path.exists() else None
     pdf = job_dir / "compliance_report.pdf"
-    render_compliance_report(tree, [a["raw"] for a in audits], pdf)
+    render_compliance_report(tree, [a["raw"] for a in audits], pdf, policy_yaml=policy_yaml)
     return FileResponse(pdf, media_type="application/pdf", filename="polaris_compliance_report.pdf")
 
 

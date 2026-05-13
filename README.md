@@ -1,6 +1,9 @@
 # Polaris
 
+![License: MIT](https://img.shields.io/badge/License-MIT-green.svg) ![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg) ![Built with Claude Code](https://img.shields.io/badge/built%20with-Claude%20Code-D97757.svg) ![LT corpus 11/11](https://img.shields.io/badge/Lobster%20Trap%20corpus-11%2F11-success.svg)
+
 > **From SOC 2 PDF to live AI guardrail in 60 seconds.**
+> *Actual: ~11s end-to-end since the Phase 9 model bake-off — see live timer in the dashboard.*
 
 Polaris auto-generates [Lobster Trap](https://github.com/veeainc/lobstertrap) security policies from your enterprise compliance documents — and continuously red-teams your AI agents to find the gaps.
 
@@ -13,9 +16,15 @@ Polaris auto-generates [Lobster Trap](https://github.com/veeainc/lobstertrap) se
 
 Enterprises deploying AI agents face a regulatory gap that's measured in weeks. They have compliance policies (SOC 2, HIPAA, EU AI Act, internal SOPs) sitting in PDFs. They have AI agents in production making real LLM calls. They have nothing connecting them. Hand-writing firewall rules to bridge that gap takes weeks of legal review.
 
+**$15,000–$36,000 of legal review → ~$0.005 in Gemini API cost.** *Estimated: 1–3 weeks of compliance counsel + paralegal review at blended $150–300/hr.*
+
+**Why now.** EU AI Act high-risk obligations take effect **August 2026** (3 months from demo). Colorado AI Act enforceable **June 2026** (1 month from demo). Enterprises with no enforcement layer at the conversational tier will be non-conformant by default.
+
 Polaris closes the loop in 60 seconds.
 
 ## How it works
+
+> *v0.1 ships with single-document input; multi-doc fusion (SOC 2 + HIPAA + EU AI Act merged into one policy) is roadmapped for v0.2.*
 
 ```
 [Compliance PDF]
@@ -43,6 +52,19 @@ Four agents. One Go binary. One closed control loop. ~1,500 lines of Python. No 
 - **Closed loop:** Lobster Trap's `_lobstertrap` declared-intent feature reports mismatches between what the agent says it'll do and what DPI detects. Polaris consumes those mismatches as red-team signals.
 - **Validation gate:** every Synthesizer output passes through `./lobstertrap test` before deploying. Hallucinated policies don't ship.
 - **Compliance-ready output:** generated policies trace back to specific source controls (SOC 2 CC6.1, EU AI Act Art. 14, OWASP LLM01). Audit-friendly by construction.
+
+## How Polaris compares
+
+| Capability                                  | Polaris | Microsoft AGT (Apr 2026) | arXiv 2509.23994 | Comp AI / Delve / Blaxel |
+| ------------------------------------------- | :-----: | :----------------------: | :--------------: | :----------------------: |
+| Auto-synthesise policy from compliance docs |   ✅    |     ❌ (manual config)     |  Partial (paper)  |            ❌            |
+| Inline DPI runtime enforcement              |   ✅    |            ✅            |        ❌        |   ❌ (audit-time only)    |
+| Closed-loop red-team verification           |   ✅    |            ❌            |        ❌        |            ❌            |
+| Cross-doc compliance citation               |   ✅    |            ❌            |     Partial      |         Partial          |
+| Auditor-grade PDF report                    |   ✅    |            ❌            |        ❌        |            ✅            |
+| < $0.01 / policy compile                    |   ✅    |           N/A            |       N/A        |     $$$ subscription     |
+
+**Microsoft built the kernel; Polaris is the brain that programs it.** Agent Governance Toolkit (April 2026) is a stateless DPI runtime — judges who know AGT will recognise that Polaris fills its missing autosynthesis layer. The arXiv paper proposed the *abstract* policy-tree pipeline; Polaris is the productionised version with a real firewall and a closed loop. Audit-time platforms certify; Polaris *enforces*.
 
 ## Quickstart
 

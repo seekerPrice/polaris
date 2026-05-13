@@ -11,6 +11,7 @@
 **Overlay text:**
 > **POLARIS**
 > *From SOC 2 PDF to live AI guardrail in 60 seconds.*
+> *60-second SLA. Actual 11s. Watch.*
 
 **Footer (small):** Veea Trust Track · TechEx 2026 · Built with Google Gemini & Lobster Trap
 
@@ -25,6 +26,11 @@ Centred quote on plain dark background:
 
 Below, small text:
 > The gap between AI agents in production and the policies meant to govern them is now measured in weeks of legal review. It is the bottleneck on enterprise AI adoption.
+
+**Why now (callouts):**
+- **EU AI Act** high-risk obligations: in force **August 2026** (3 months from demo).
+- **Colorado AI Act**: enforceable **June 2026** (1 month from demo).
+- Without runtime enforcement, every enterprise with a deployed AI agent is non-conformant by default.
 
 ---
 
@@ -65,18 +71,23 @@ Embed the 60-second action demo (with 60-90s framing intro pre-pended). Backup: 
 
 ---
 
-## Slide 7 — Why now
+## Slide 7 — Why now + unit economics
 
 Three-column compact table:
 
-| Regulation | In force | Demands |
-|---|---|---|
-| EU AI Act | 2025 | Risk management, logging, human oversight |
-| SOC 2 (AI annex) | 2026 | Conversational-layer audit trails |
-| NIST AI RMF | 2024 | Continuous adversarial testing |
+| Regulation         | In force        | Demands                                   |
+| ------------------ | --------------- | ----------------------------------------- |
+| EU AI Act          | **August 2026** | Risk management, logging, human oversight |
+| Colorado AI Act    | **June 2026**   | Algorithmic discrimination disclosure     |
+| SOC 2 (AI annex)   | 2026            | Conversational-layer audit trails         |
+| NIST AI RMF        | 2024            | Continuous adversarial testing            |
 
 Closing line:
-> All three are policy documents. Polaris compiles all three into runtime enforcement.
+> All four are policy documents. Polaris compiles all four into runtime enforcement.
+
+**Unit economics:**
+- **$15,000–$36,000** of legal review per policy (1–3 weeks of compliance counsel + paralegal at blended $150–300/hr) → **~$0.005** in Gemini API cost.
+- ~**3 million ×** cost compression on the policy authoring step.
 
 ---
 
@@ -84,7 +95,7 @@ Closing line:
 
 Compact diagram showing exactly what was used:
 
-- **Google Gemini** — `gemini-3.1-pro-preview` for the Synthesizer + Red Team. `gemini-3-flash-preview` for the Reader (2× faster than 2.5-flash with same coverage). [Stacks Gemini partner award.]
+- **Google Gemini** — `gemini-3.1-flash-lite` (GA May 7 2026) powers Reader AND Synthesizer (the latter with `thinking_level="low"` per `docs/MODEL_BAKEOFF.md`); `gemini-3.1-pro-preview` powers the Red Team Agent. Schema-first architecture passes `LobsterTrapPolicy` directly as Gemini's `response_schema`, eliminating the YAML-string-bloat surface that broke earlier 3.x experiments. [Stacks Gemini partner award.]
 - **Veea Lobster Trap** — DPI proxy with full bidirectional `_lobstertrap` declared-intent integration — the underused half of LT, central to Polaris. [Stacks Veea partner award.]
 - **No frameworks.** Direct API calls. ~2,000 lines of Python + 250 lines of TypeScript.
 - **Built solo in 6 days, validated by 20+ unit tests, 11/11 Lobster Trap corpus tests, and a closed-loop Red Team verification.**

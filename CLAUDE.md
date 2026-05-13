@@ -35,7 +35,7 @@ The demo recording IS the project. If a feature does not appear in the 60-second
 ```
                        POLARIS
 
-  [Compliance PDFs]
+  [Compliance PDF]
          │
          ▼
    ┌─────────────┐         policy tree (JSON)        ┌──────────────┐

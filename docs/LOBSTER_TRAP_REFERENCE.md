@@ -240,7 +240,7 @@ Agents can declare their intent in the request body. Standard OpenAI clients ign
 
 ```json
 {
-  "model": "gemini-2.5-flash",
+  "model": "gemini-3.1-flash-lite",
   "messages": [
     {"role": "user", "content": "Read /home/cole/notes.txt and summarize"}
   ],

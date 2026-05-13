@@ -35,17 +35,21 @@ Voiceover: *"Upload your SOC 2 policy."*
 
 Voiceover: *"Polaris reads the document. Two Gemini agents translate it into firewall rules."*
 
-**0:14 — 0:17** — A green checkmark appears: "`./lobstertrap test` passed — 12/12 adversarial cases blocked."
+**0:14 — 0:17** — A green checkmark appears: "`./lobstertrap test` passed — 11/11 adversarial cases blocked." A small live-timer Badge in the upload card reads `~11s`.
 
-Voiceover: *"It validates against Lobster Trap's adversarial test suite."*
+Voiceover: *"It validates against Lobster Trap's adversarial test suite — and we did it in eleven seconds."*
 
-**0:17 — 0:22** — Cut to the second window: Lobster Trap's live dashboard, now showing the loaded policy. Cursor moves to a terminal pane. Type one command:
+**0:17 — 0:22** — Pre-step before the injection demo. Run `bash scripts/demo_benign_call.sh` in the terminal. The Live Agent Traffic panel shows a green ALLOW row: `intent=communication · risk=0.12 · agent=sales-ops-copilot-v1`. Cursor pauses on it for ~2 seconds.
+
+Voiceover: *"Polaris is selective. A normal Sales Ops Copilot request — summarise yesterday's customer feedback — sails through."* This beat exists so the judge doesn't conclude that Polaris over-blocks.
+
+**0:22 — 0:27** — Cursor moves to a terminal pane. Type one command (this one carries the embedded injection in `customer_feedback_today.txt`):
 
 ```
 $ python -m polaris.demo_agent "summarize today's customer feedback"
 ```
 
-Voiceover: *"Now a real enterprise agent makes a real request — through Polaris."*
+Voiceover: *"Now the same agent reads today's feedback file — but today, an attacker has hidden a prompt injection inside one of the customer messages."*
 
 **0:22 — 0:30** — In the Polaris dashboard's live traffic panel, a row appears: agent making a Gemini call. It reads the customer feedback file. The dashboard then flashes red. A DENY card slides in:
 
@@ -64,7 +68,9 @@ Voiceover: *"Polaris's Red Team Agent autonomously stress-tests the policy. It f
 
 **0:38 — 0:46** — The Synthesizer card lights up again: "Patching policy — adding `contains_obfuscation` rule." Three new YAML lines stream into the policy panel. Green checkmark again. "Lobster Trap reloaded."
 
-Voiceover: *"The Synthesizer patches the policy. Validates. Redeploys."*
+Voiceover: *"The Synthesizer regenerates the policy via Gemini — and for the obfuscation class, deterministically closes the regex-DPI blind spot with a single-condition `contains_obfuscation` rule. Other gap classes get pure LLM regeneration. Lobster Trap reloads."*
+
+> **Honesty note (NOT spoken in demo, but referenced in code review):** the obfuscation closure rule is a Python-side deterministic patch (`Synthesizer._inject_obfuscation_closure`) because Gemini's regenerate output reliably emits a compound `contains_obfuscation AND contains_exfiltration` rule that misses encoded payloads (LT's regex DPI can't decode base64). Gemini still runs the regenerate in parallel — the deterministic patch closes the regex-DPI gap *in addition to* whatever Gemini produces.
 
 **0:46 — 0:51** — Red Team retries the base64 attack. This time, DENIED — red flash, **`block_obfuscated_exfiltration`** rule matched.
 
@@ -202,9 +208,9 @@ All three are policy documents. Polaris compiles all three into runtime enforcem
 
 A compact diagram showing exactly what we used:
 
-- **Google Gemini** — 2.5 Pro for the Synthesizer, 2.5 Flash for Reader and Red Team
+- **Google Gemini** — `gemini-3.1-flash-lite` (GA May 7 2026) for the Reader AND Synthesizer (the latter with `thinking_level="low"` per `docs/MODEL_BAKEOFF.md`); `gemini-3.1-pro-preview` for the Red Team Agent. Schema-first architecture (`LobsterTrapPolicy` as `response_schema`).
 - **Veea Lobster Trap** — DPI proxy with full bidirectional `_lobstertrap` declared-intent integration
-- **No frameworks.** Direct API calls. ~1,500 lines of Python.
+- **No frameworks.** Direct API calls. ~2,000 lines of Python + 250 lines of TypeScript.
 
 Tag line: "First end-to-end natural-language → deployed firewall implementation on an OSS DPI proxy."
 
@@ -238,8 +244,8 @@ GitHub link · Demo video link · LinkedIn handles.
 Things that can go wrong on demo day and the plan for each.
 
 ### "The Synthesizer call to Gemini times out during the demo"
-- The dashboard ships with `examples/precomputed_run_1.json`, a successful end-to-end run pre-cached.
-- A keyboard shortcut (`Cmd+Shift+R`) replays the cached run on a 60-second timer.
+- The dashboard ships with `dashboard/public/precomputed_run.json`, a successful end-to-end run pre-cached (recapture via `scripts/capture_replay.sh`).
+- Keyboard shortcut **`Cmd+Shift+P`** (P for Polaris) replays the cached SSE event stream on the dashboard. *Note: not Cmd+Shift+R — Chrome reserves that for hard-reload.*
 - The recorded video already contains this — judges see the same flow either way.
 
 ### "Lobster Trap crashes mid-demo"

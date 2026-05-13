@@ -61,7 +61,7 @@ class PolicyTree(BaseModel):
 
 
 class Reader:
-    """Reader Agent: parses compliance docs into PolicyTree using gemini-3-flash-preview.
+    """Reader Agent: parses compliance docs into PolicyTree using gemini-3.1-flash-lite.
 
     System prompt body is extracted from prompts/reader_agent.md (CLAUDE.md §6).
     """

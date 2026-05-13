@@ -38,4 +38,13 @@ async def test_compliance_report_pdf_renders():
         ct = pdf_resp.headers.get("content-type", "")
         assert ct.startswith("application/pdf"), f"content-type={ct!r}"
         assert pdf_resp.content[:4] == b"%PDF", f"not a valid PDF magic: {pdf_resp.content[:30]!r}"
-        assert len(pdf_resp.content) > 1000, f"PDF suspiciously small ({len(pdf_resp.content)}b)"
+        # ReportLab compresses heavily — content matters more than byte size; keep size sanity floor at the
+        # original baseline and verify the new sections rendered via text extraction.
+        assert len(pdf_resp.content) > 1500, f"PDF suspiciously small ({len(pdf_resp.content)}b)"
+        # Phase-10 T1.2: extract text via pypdf to verify the rewritten coverage sections rendered.
+        from io import BytesIO
+        from pypdf import PdfReader
+        reader = PdfReader(BytesIO(pdf_resp.content))
+        text = "\n".join(p.extract_text() or "" for p in reader.pages)
+        assert "Coverage" in text, f"PDF missing 'Coverage' section: first 500 chars={text[:500]!r}"
+        assert "Gap report" in text, f"PDF missing 'Gap report' section: first 500 chars={text[:500]!r}"
