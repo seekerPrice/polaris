@@ -199,7 +199,11 @@ def _compute_mismatches(raw: dict) -> list[str]:
     """Compare declared_headers from the agent (sent in `_lobstertrap` request body)
     against LT's detected metadata. Phase-11 T1.B1 — closes the dead-UI loop where
     `a.mismatches` was rendered but never populated by any producer. Returns a list
-    of human-readable mismatch strings; empty list means no mismatch."""
+    of human-readable mismatch strings; empty list means no mismatch.
+
+    Note: when LT itself emits structured `mismatches` (its own native producer),
+    `_pump_audit_log` skips calling this function — LT's emit is strictly more
+    informative. This function is the FALLBACK for entries LT doesn't pre-classify."""
     out: list[str] = []
     declared = raw.get("declared_headers") or raw.get("declared") or {}
     detected = raw.get("metadata") or raw.get("detected") or {}
@@ -219,19 +223,20 @@ def _compute_mismatches(raw: dict) -> list[str]:
         risk_str = f" (risk {risk:.2f})" if isinstance(risk, (int, float)) else ""
         out.append(f"declared_intent={dec_intent} but detected={det_intent}{risk_str}")
 
-    # Declared paths/domains that don't appear in the detected output → silently dropped
-    # is fine; the *interesting* case is detected paths/domains the agent DIDN'T declare
-    # (smuggled targets).
+    # Smuggled targets: detected paths/domains the agent DIDN'T declare. Catches the
+    # case where the agent says "I'll read /home/x" but LT-detected output mentions
+    # /etc/shadow. Case-fold domain comparison (RFC 1035 domain names are case-insensitive);
+    # paths stay case-sensitive (POSIX semantics).
     dec_paths = set(declared.get("declared_paths") or [])
     det_paths = set(detected.get("target_paths") or [])
     smuggled_paths = det_paths - dec_paths
-    if smuggled_paths and dec_paths:
+    if smuggled_paths:
         out.append(f"undeclared target_paths: {sorted(smuggled_paths)[:3]}")
 
-    dec_domains = set(declared.get("declared_domains") or [])
-    det_domains = set(detected.get("target_domains") or [])
+    dec_domains = {d.lower() for d in (declared.get("declared_domains") or []) if isinstance(d, str)}
+    det_domains = {d.lower() for d in (detected.get("target_domains") or []) if isinstance(d, str)}
     smuggled_domains = det_domains - dec_domains
-    if smuggled_domains and dec_domains is not None and detected.get("contains_urls"):
+    if smuggled_domains and detected.get("contains_urls"):
         out.append(f"undeclared target_domains: {sorted(smuggled_domains)[:3]}")
 
     return out
@@ -273,12 +278,16 @@ async def _pump_audit_log(job_id: str, generation: int) -> None:
         # Phase-11 T1.B1: augment with mismatches BEFORE persistence + publish so both
         # the DB row and the SSE event carry the field (was previously None always).
         # Two sources: LT's native (structured-object) emit, and our _compute_mismatches
-        # producer. Normalize both to plain strings for the dashboard's string[] type.
-        lt_native = _normalize_mismatches(raw.get("mismatches"))
-        polaris_computed = _compute_mismatches(raw)
-        merged = lt_native + [m for m in polaris_computed if m not in lt_native]
-        if merged:
-            raw["mismatches"] = merged
+        # fallback. LT-native is strictly more informative (severity tag, structured
+        # declared/detected pair), so when it fires we use it AS-IS — skip the Polaris
+        # fallback to avoid surfacing the same fact twice on the dashboard.
+        lt_raw = raw.get("mismatches")
+        if lt_raw:
+            raw["mismatches"] = _normalize_mismatches(lt_raw)
+        else:
+            polaris_computed = _compute_mismatches(raw)
+            if polaris_computed:
+                raw["mismatches"] = polaris_computed
         await record_audit_entry(DB_PATH, job_id, raw)
         await BUS.publish({"type": "audit_log_entry", "job_id": job_id, "entry": raw})
 

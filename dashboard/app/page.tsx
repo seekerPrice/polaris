@@ -13,6 +13,8 @@ function fmtTime(ts?: string): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts;
   const elapsed = Math.floor((Date.now() - d.getTime()) / 1000);
+  // Future or clock-skewed timestamps: fall back to wall-clock string.
+  if (elapsed < 0) return d.toLocaleTimeString();
   if (elapsed < 1) return "just now";
   if (elapsed < 60) return `${elapsed}s ago`;
   if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m ago`;
@@ -45,6 +47,7 @@ type State = {
   probes: ProbeView[];
   timing: { startedAt: number | null; deployedMs: number | null };
   policyHash: string | null;
+  policiesGenerated: number;
 };
 
 type Action =
@@ -61,12 +64,20 @@ const init: State = {
   probes: [],
   timing: { startedAt: null, deployedMs: null },
   policyHash: null,
+  policiesGenerated: 0,
 };
 
 function reducer(s: State, ev: Action): State {
   switch (ev.type) {
     case "set_job":
-      return { ...init, jobId: ev.jobId, timing: { startedAt: Date.now(), deployedMs: null } };
+      // Preserve the running policy counter across uploads so the KPI is a real count,
+      // not a 0/1 toggle. Other run-scoped state resets via `...init`.
+      return {
+        ...init,
+        jobId: ev.jobId,
+        timing: { startedAt: Date.now(), deployedMs: null },
+        policiesGenerated: s.policiesGenerated + 1,
+      };
     case "reader_progress":
       return { ...s, reader: { status: ev.status, n: ev.n_requirements ?? s.reader.n } };
     case "synthesizer_progress":
@@ -229,11 +240,11 @@ export default function Page() {
       </header>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
-        <KPI label="Policies generated" value={state.jobId ? "1" : "0"} />
+        <KPI label="Policies generated" value={state.policiesGenerated} />
         <KPI label="Attacks blocked" value={state.audits.filter((a) => a.verdict === "DENY").length} />
         <KPI
           label="Mismatches caught"
-          value={state.audits.filter((a) => a.mismatches && a.mismatches.length > 0).length}
+          value={state.audits.reduce((n, a) => n + (a.mismatches?.length ?? 0), 0)}
         />
         <KPI label="Controls mapped" value={state.reader.n} />
       </div>
@@ -308,14 +319,7 @@ export default function Page() {
               </div>
             )}
             <div className="text-[10px] text-slate-500 mt-1">
-              <a
-                href="https://github.com/<your-handle>/polaris/blob/main/docs/MODEL_BAKEOFF.md"
-                target="_blank"
-                rel="noreferrer"
-                className="underline hover:text-slate-300"
-              >
-                Why this model? (48-run bake-off)
-              </a>
+              Why this model? See <code className="text-slate-400">docs/MODEL_BAKEOFF.md</code> (48-run bake-off).
             </div>
           </div>
           {state.jobId && (

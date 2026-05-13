@@ -41,7 +41,7 @@ Polaris uses Google Gemini and Veea Lobster Trap as a closed control loop: Reade
 
 ## Verification artifacts to include in repo
 - [ ] `submission_confirmation.png` (screenshot of lablab.ai submission confirmation)
-- [ ] `docs/img/demo_thumbnail.png` (dashboard mid-demo, captured via `scripts/screenshot_demo.sh` or browser DevTools)
+- [ ] `docs/img/demo_thumbnail.png` (dashboard mid-demo, captured via `scripts/capture_thumbnail.sh` or browser DevTools)
 - [ ] `docs/MODEL_BAKEOFF.md` (the 48-run benchmark that picked the Phase 9 winner)
 - [ ] `dashboard/public/precomputed_run.json` (stage-day fallback fixture; Cmd+Shift+P replays without Gemini/LT)
 
