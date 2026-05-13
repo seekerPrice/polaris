@@ -43,6 +43,20 @@
 
 **End-to-end hero metric (Reader + Synthesizer + Lobster Trap deploy):** ≈3 + 5 + 5 = **~13s**, well under the 60s claim.
 
+## Failure modes observed
+
+Per-config root-cause classification across the 48 runs:
+
+- **`gemini-3.1-pro-preview` + `thinking_budget=8192`** (5.0/11 worst Pro score) — Pro at high thinking emitted compound rules (`AND` instead of separate `OR` rules), so single-condition variants of the corpus prompts slipped through. Validates the reviewer-noted "more thinking ≠ better."
+- **`gemini-3.1-flash-lite` + `thinking_level="high"`** (143s median) — 30× latency for zero quality gain (5.7/11, identical to `minimal` tier). Lite at high-thinking spends its budget on safety reasoning, not rule expansion. Don't ship.
+- **All `gemini-3.x` configs without schema-first** (pre-Phase-9) — emitted `yaml_text: str` outputs padded with thousands of trailing newline characters, blowing the 16K output cap. ~50% parse failure rate. Eliminated by passing `LobsterTrapPolicy` as `response_schema` directly: 0 parse failures across all 48 Phase-9 runs.
+- **All configs on SOC 2 doc** (3/11 corpus regardless of model) — the SOC 2 excerpt is the shortest input with the broadest controls; LLMs default to LOG/HUMAN_REVIEW for controls that the corpus expects to be DENY. Mitigation: supplementary baseline rules (Phase-10) hard-DENY known classes regardless of source policy intent, so corpus passes 11/11 even when intrinsic Gemini output is 3/11.
+
+**Limitations of this bake-off** (full statistical rigor is v0.2 work):
+- N=2 trials per config-doc pair. 95% binomial CI on a 6.0/11 mean is roughly ±0.18; no Tukey HSD applied for the 8-config pairwise comparison. Winner is robust to that variance (5× cheaper, 2.7× faster) but not statistically certified.
+- Seed not pinned. `temperature=0.1` controls most stochasticity; ~±0.3 corpus-pass variance expected on rerun.
+- N=3 documents (SOC 2, EU AI Act, OWASP LLM Top 10) — generalization to HIPAA / ISO 27001 / corporate SOPs unmeasured. Roadmapped for v0.2 expanded benchmark.
+
 ## Raw data
 
 `artifacts/bakeoff_results.json` — every per-run measurement.

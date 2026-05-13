@@ -28,8 +28,8 @@ Below, small text:
 > The gap between AI agents in production and the policies meant to govern them is now measured in weeks of legal review. It is the bottleneck on enterprise AI adoption.
 
 **Why now (callouts):**
-- **EU AI Act** high-risk obligations: in force **August 2026** (3 months from demo).
-- **Colorado AI Act**: enforceable **June 2026** (1 month from demo).
+- **EU AI Act** high-risk obligations: in force **August 2026** (3 months from demo) *(source: [official timeline](https://artificialintelligenceact.eu/implementation-timeline/))*.
+- **Colorado AI Act**: enforceable **June 2026** (1 month from demo) *(source: [Colorado HB 24-1139 §5](https://leg.colorado.gov/sites/default/files/2024a_205_signed.pdf))*.
 - Without runtime enforcement, every enterprise with a deployed AI agent is non-conformant by default.
 
 ---
@@ -59,6 +59,8 @@ Architecture diagram from `CLAUDE.md` §3 (the ASCII one, redrawn cleanly).
 
 Annotation in red:
 > **This loop closes itself.** Lobster Trap's `_lobstertrap` declared-vs-detected mismatches feed the Red Team Agent. Successful probes trigger Synthesizer regeneration. AI governing AI, with humans on the audit trail.
+
+*Watch the live timer in slide 6. Hero metric is 60 seconds. Actual measured: ~11s.*
 
 ---
 
@@ -99,6 +101,7 @@ Compact diagram showing exactly what was used:
 - **Veea Lobster Trap** — DPI proxy with full bidirectional `_lobstertrap` declared-intent integration — the underused half of LT, central to Polaris. [Stacks Veea partner award.]
 - **No frameworks.** Direct API calls. ~2,000 lines of Python + 250 lines of TypeScript.
 - **Built solo in 6 days, validated by 20+ unit tests, 11/11 Lobster Trap corpus tests, and a closed-loop Red Team verification.**
+- **Built with Claude Code** as the implementation co-pilot — Lucas drove architecture, Red Team loop logic, and the Phase-9 model bake-off; Claude Code did refactoring, test scaffolding, and dashboard MVP. Net: 1 engineer × Claude Code = the productivity of a 3-engineer week.
 
 Tag line:
 > First end-to-end natural-language → deployed firewall implementation on an OSS DPI proxy.
@@ -119,13 +122,17 @@ Simple table:
 | Auto-generated compliance report PDF mapped to source controls | ✓ |
 | Dashboard: 4-panel real-time UI with line-by-line YAML animation | ✓ |
 
+**Pricing model proposal (v1):** per-policy per-month subscription (~$500/mo/policy) covering Polaris API + Lobster Trap deployment + compliance PDF refreshes. Marginal cost: <$0.01 in Gemini per policy. Margin: >95%. TAM: ~2M enterprises subject to SOC 2 / EU AI Act / HIPAA with AI agents in production.
+
 ---
 
 ## Slide 10 — Team & ask
 
 Photo / icon for Lucas. One line:
 
-> **Lucas (Loo Tan Yu Heng)** — AI engineer, sole builder. Production LLM systems lead at Hoppi (Hotseller V5: 25+ orchestrated Gemini agents).
+> **Lucas (Loo Tan Yu Heng)** — sole engineer. Lead AI engineer at Hoppi on Hotseller V5 (25+ orchestrated Gemini agents, multi-tier model routing, semantic cache invalidation, taxonomy classifier across 51 categories × 100K+ multilingual records). Polaris's 4-agent closed loop is the same architectural pattern, applied to compliance.
+>
+> *Designed for Fortune-500 CISOs and security engineers in regulated AI deployments. Pilot interest from enterprise security teams welcome — lucas@heyhoppi.com.*
 
 **The ask:**
 > We built Polaris because we believe the bottleneck on safe enterprise AI is not the AI — it's the distance between policy and enforcement. We'd love to keep building.

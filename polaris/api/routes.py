@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import uuid
 from pathlib import Path
 from typing import Any
+
+# Phase-11 T1.B3: default baseline policy deployed on Synth failure / startup before
+# any compliance doc is uploaded. Known-safe; LT corpus 11/11 PASS verified.
+_DEFAULT_BASELINE_POLICY = Path("./policies/default_baseline.yaml")
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -162,13 +167,120 @@ async def _pipeline(job_id: str, file_path: Path) -> None:
     )
 
     if syn.passed:
+        # Phase-11 T1.B4: compute SHA-256 of the deployed YAML for audit-defensibility.
+        policy_sha = hashlib.sha256(syn.output.yaml_text.encode("utf-8")).hexdigest()[:12]
+        await update_job(DB_PATH, job_id, policy_sha256=policy_sha)
+        await BUS.publish({"type": "policy_hash", "job_id": job_id, "sha256": policy_sha})
         await _redeploy(job_id, job_dir / "policy.yaml")
+    else:
+        # Phase-11 T1.B3: Synth validation failed (3 retries exhausted). Deploy the
+        # default baseline so the proxy doesn't end up in an undefined state. Surfaced
+        # to the dashboard so the operator knows we fell back.
+        if _DEFAULT_BASELINE_POLICY.exists():
+            await BUS.publish({
+                "type": "synthesizer_progress", "job_id": job_id,
+                "status": "fell_back_to_baseline",
+                "summary": "Synth validation failed; deploying policies/default_baseline.yaml",
+            })
+            await _redeploy(job_id, _DEFAULT_BASELINE_POLICY)
+
+
+# Intent categories whose detection should trip a mismatch alarm if the agent's
+# declared intent was the generic "general" or "communication" envelope. Narrowed to
+# high-signal cases to avoid false-positive cascades on benign traffic (see Phase-11
+# risk register 11.1b).
+_HIGH_RISK_DETECTED_INTENTS: frozenset[str] = frozenset({
+    "code_execution", "system", "credential_access", "data_access", "file_io", "network",
+})
+_LOW_DECLARED_INTENTS: frozenset[str] = frozenset({"general", "communication"})
+
+
+def _compute_mismatches(raw: dict) -> list[str]:
+    """Compare declared_headers from the agent (sent in `_lobstertrap` request body)
+    against LT's detected metadata. Phase-11 T1.B1 — closes the dead-UI loop where
+    `a.mismatches` was rendered but never populated by any producer. Returns a list
+    of human-readable mismatch strings; empty list means no mismatch."""
+    out: list[str] = []
+    declared = raw.get("declared_headers") or raw.get("declared") or {}
+    detected = raw.get("metadata") or raw.get("detected") or {}
+    if not isinstance(declared, dict) or not isinstance(detected, dict):
+        return out
+
+    dec_intent = (declared.get("declared_intent") or "").strip().lower()
+    det_intent = (detected.get("intent_category") or "").strip().lower()
+    if (
+        dec_intent
+        and det_intent
+        and dec_intent != det_intent
+        and dec_intent in _LOW_DECLARED_INTENTS
+        and det_intent in _HIGH_RISK_DETECTED_INTENTS
+    ):
+        risk = detected.get("risk_score")
+        risk_str = f" (risk {risk:.2f})" if isinstance(risk, (int, float)) else ""
+        out.append(f"declared_intent={dec_intent} but detected={det_intent}{risk_str}")
+
+    # Declared paths/domains that don't appear in the detected output → silently dropped
+    # is fine; the *interesting* case is detected paths/domains the agent DIDN'T declare
+    # (smuggled targets).
+    dec_paths = set(declared.get("declared_paths") or [])
+    det_paths = set(detected.get("target_paths") or [])
+    smuggled_paths = det_paths - dec_paths
+    if smuggled_paths and dec_paths:
+        out.append(f"undeclared target_paths: {sorted(smuggled_paths)[:3]}")
+
+    dec_domains = set(declared.get("declared_domains") or [])
+    det_domains = set(detected.get("target_domains") or [])
+    smuggled_domains = det_domains - dec_domains
+    if smuggled_domains and dec_domains is not None and detected.get("contains_urls"):
+        out.append(f"undeclared target_domains: {sorted(smuggled_domains)[:3]}")
+
+    return out
+
+
+def _normalize_mismatches(value: Any) -> list[str]:
+    """LT can emit `mismatches` either as plain strings or as objects with
+    `{field, declared, detected, severity}` keys. Normalize to plain strings so the
+    dashboard's `mismatches: string[]` type renders correctly."""
+    if not value:
+        return []
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            out.append(item)
+        elif isinstance(item, dict):
+            field = item.get("field", "?")
+            declared = item.get("declared")
+            detected = item.get("detected")
+            sev = item.get("severity")
+            sev_tag = f" [{sev}]" if sev else ""
+            out.append(f"{field}: declared={declared} detected={detected}{sev_tag}")
+        else:
+            out.append(str(item))
+    return out
 
 
 async def _pump_audit_log(job_id: str, generation: int) -> None:
     async for entry in LT.tail_audit_log(generation=generation):
-        await record_audit_entry(DB_PATH, job_id, entry.raw)
-        await BUS.publish({"type": "audit_log_entry", "job_id": job_id, "entry": entry.raw})
+        raw = entry.raw
+        # Phase-11: alias LT's snake-cased field names so the dashboard's TypeScript
+        # `AuditEntry` type renders them. LT emits `metadata` + `declared_headers`; the
+        # dashboard expects `detected` + `declared`. Pre-existing bug — the audit panel's
+        # detected/declared sections never rendered because the field names didn't match.
+        if "metadata" in raw and "detected" not in raw:
+            raw["detected"] = raw["metadata"]
+        if "declared_headers" in raw and "declared" not in raw:
+            raw["declared"] = raw["declared_headers"]
+        # Phase-11 T1.B1: augment with mismatches BEFORE persistence + publish so both
+        # the DB row and the SSE event carry the field (was previously None always).
+        # Two sources: LT's native (structured-object) emit, and our _compute_mismatches
+        # producer. Normalize both to plain strings for the dashboard's string[] type.
+        lt_native = _normalize_mismatches(raw.get("mismatches"))
+        polaris_computed = _compute_mismatches(raw)
+        merged = lt_native + [m for m in polaris_computed if m not in lt_native]
+        if merged:
+            raw["mismatches"] = merged
+        await record_audit_entry(DB_PATH, job_id, raw)
+        await BUS.publish({"type": "audit_log_entry", "job_id": job_id, "entry": raw})
 
 
 async def _redteam_loop(job_id: str, policy_yaml: str, audits: list[dict]) -> None:

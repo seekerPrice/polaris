@@ -18,7 +18,7 @@ Enterprises deploying AI agents face a regulatory gap that's measured in weeks. 
 
 **$15,000–$36,000 of legal review → ~$0.005 in Gemini API cost.** *Estimated: 1–3 weeks of compliance counsel + paralegal review at blended $150–300/hr.*
 
-**Why now.** EU AI Act high-risk obligations take effect **August 2026** (3 months from demo). Colorado AI Act enforceable **June 2026** (1 month from demo). Enterprises with no enforcement layer at the conversational tier will be non-conformant by default.
+**Why now.** EU AI Act high-risk obligations take effect **August 2026** (3 months from demo) *([implementation timeline](https://artificialintelligenceact.eu/implementation-timeline/))*. Colorado AI Act enforceable **June 2026** (1 month from demo) *([Colorado HB 24-1139 §5](https://leg.colorado.gov/sites/default/files/2024a_205_signed.pdf))*. Enterprises with no enforcement layer at the conversational tier will be non-conformant by default.
 
 Polaris closes the loop in 60 seconds.
 
@@ -55,22 +55,25 @@ Four agents. One Go binary. One closed control loop. ~1,500 lines of Python. No 
 
 ## How Polaris compares
 
-| Capability                                  | Polaris | Microsoft AGT (Apr 2026) | arXiv 2509.23994 | Comp AI / Delve / Blaxel |
-| ------------------------------------------- | :-----: | :----------------------: | :--------------: | :----------------------: |
-| Auto-synthesise policy from compliance docs |   ✅    |     ❌ (manual config)     |  Partial (paper)  |            ❌            |
-| Inline DPI runtime enforcement              |   ✅    |            ✅            |        ❌        |   ❌ (audit-time only)    |
-| Closed-loop red-team verification           |   ✅    |            ❌            |        ❌        |            ❌            |
-| Cross-doc compliance citation               |   ✅    |            ❌            |     Partial      |         Partial          |
-| Auditor-grade PDF report                    |   ✅    |            ❌            |        ❌        |            ✅            |
-| < $0.01 / policy compile                    |   ✅    |           N/A            |       N/A        |     $$$ subscription     |
+| Capability                                  | Polaris | Microsoft AGT (Apr 2026) | arXiv 2509.23994 | Comp AI / Delve / Blaxel | Anthropic Claude gating |
+| ------------------------------------------- | :-----: | :----------------------: | :--------------: | :----------------------: | :----------------------: |
+| Auto-synthesise policy from compliance docs |   ✅    |     ❌ (manual config)     |  Partial (paper)  |            ❌            |            ❌            |
+| Inline DPI runtime enforcement              |   ✅    |            ✅            |        ❌        |   ❌ (audit-time only)    |   Partial (per-API call)   |
+| Closed-loop red-team verification           |   ✅    |            ❌            |        ❌        |            ❌            |            ❌            |
+| Cross-doc compliance citation               |   ✅    |            ❌            |     Partial      |         Partial          |            ❌            |
+| Auditor-grade PDF report                    |   ✅    |            ❌            |        ❌        |            ✅            |            ❌            |
+| Open-source / DPI-composable                |   ✅    |            ✅            |        ✅        |            ❌            |    ❌ (closed-source)     |
+| < $0.01 / policy compile                    |   ✅    |           N/A            |       N/A        |     $$$ subscription     |     Anthropic-priced     |
 
-**Microsoft built the kernel; Polaris is the brain that programs it.** Agent Governance Toolkit (April 2026) is a stateless DPI runtime — judges who know AGT will recognise that Polaris fills its missing autosynthesis layer. The arXiv paper proposed the *abstract* policy-tree pipeline; Polaris is the productionised version with a real firewall and a closed loop. Audit-time platforms certify; Polaris *enforces*.
+**Microsoft built the kernel; Polaris is the brain that programs it.** Agent Governance Toolkit (April 2026) is a stateless DPI runtime — judges who know AGT will recognise that Polaris fills its missing autosynthesis layer. The arXiv paper proposed the *abstract* policy-tree pipeline; Polaris is the productionised version with a real firewall and a closed loop. Audit-time platforms certify; Polaris *enforces*. **Anthropic's Claude API includes per-call gating, but on a proprietary, non-composable layer — Polaris is DPI-native (you keep your DPI vendor), where Claude is LLM-native (you marry your safety to the model).**
+
+*[¹] As of 2026-05-13. [Microsoft Agent Governance Toolkit](https://opensource.microsoft.com/blog/2026/04/02/introducing-the-agent-governance-toolkit-open-source-runtime-security-for-ai-agents/) is a stateless DPI runtime requiring manual policy configuration. [arXiv 2509.23994](https://arxiv.org/abs/2509.23994) proposes the policy-tree extraction pipeline but does not include runtime enforcement or closed-loop red-team verification.*
 
 ## Quickstart
 
 ```bash
-# 1. Clone
-git clone https://github.com/<you>/polaris.git
+# 1. Clone (replace <your-handle> with the actual GitHub owner of the public repo)
+git clone https://github.com/<your-handle>/polaris.git
 cd polaris
 
 # 2. Python deps (using uv)
@@ -137,7 +140,9 @@ MIT.
 
 ## Team
 
-- **Lucas (Loo Tan Yu Heng)** — AI engineer, sole builder. Production LLM systems at Hoppi (lead engineer on Hotseller V5 — 25+ orchestrated Gemini agents).
+- **Lucas (Loo Tan Yu Heng)** — sole engineer. Lead AI engineer at Hoppi on Hotseller V5: 25+ orchestrated Gemini agents, multi-tier model routing, semantic cache invalidation, taxonomy classifier across 51 categories × 100K+ multilingual records, per-entity iterative RAG. **Polaris's 4-agent closed loop is the same architectural pattern, applied to compliance.** Authored a 26-entry LLM Production Anti-Pattern Registry — rare asset.
+
+Designed for Fortune-500 CISOs and security engineers in regulated AI deployments. *Pilot interest from enterprise security teams welcome — lucas@heyhoppi.com.*
 
 Built in Kuala Lumpur, May 2026, for the TechEx Veea Trust Track hackathon.
 

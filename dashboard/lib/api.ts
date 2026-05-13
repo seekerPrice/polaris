@@ -19,7 +19,8 @@ export type PolarisEvent =
   | { type: "lobstertrap_reloaded"; job_id: string }
   | { type: "audit_log_entry"; job_id: string; entry: AuditEntry }
   | { type: "redteam_probe_started"; job_id: string; probe: ProbeShape }
-  | { type: "redteam_probe_result"; job_id: string; result: { probe: ProbeShape; actual_verdict: string; is_gap: boolean } };
+  | { type: "redteam_probe_result"; job_id: string; result: { probe: ProbeShape; actual_verdict: string; is_gap: boolean } }
+  | { type: "policy_hash"; job_id: string; sha256: string };
 
 export type AuditEntry = {
   timestamp?: string;

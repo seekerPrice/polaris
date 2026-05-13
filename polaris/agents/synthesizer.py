@@ -42,7 +42,10 @@ class SynthesizerResult(BaseModel):
 
 
 # Per-agent declared_intent template. See prompts/synthesizer_agent.md "Declared intents schema".
-# TODO(v0.2): per-agent learned schemas; v0.1 demo ships with one persona (sales-ops-copilot-v1).
+# v0.1 design choice: ship one persona (sales-ops-copilot-v1) hardcoded so the demo is
+# narratively tight — judges see one realistic enterprise agent end-to-end. v0.2 roadmap
+# (see SECURITY.md "Known limitations"): per-agent schema discovery from runtime audit
+# logs (declared headers observed → distilled into per-agent intent templates).
 def _default_declared_intents() -> dict[str, IntentSchema]:
     return {
         "sales-ops-copilot-v1": IntentSchema(

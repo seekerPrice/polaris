@@ -16,8 +16,11 @@ CREATE TABLE IF NOT EXISTS jobs (
   policy_tree_json TEXT,
   policy_yaml TEXT,
   declared_intents_json TEXT,
-  status TEXT NOT NULL
+  status TEXT NOT NULL,
+  policy_sha256 TEXT
 );
+-- Phase-11 T1.B4: add policy_sha256 column to existing tables (no-op if column already exists).
+-- SQLite doesn't have ADD COLUMN IF NOT EXISTS, so we run conditionally below in init_db.
 CREATE TABLE IF NOT EXISTS audit_entries (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_id TEXT,
@@ -41,6 +44,12 @@ CREATE INDEX IF NOT EXISTS idx_audit_job ON audit_entries(job_id);
 async def init_db(path: Path) -> None:
     async with aiosqlite.connect(path) as db:
         await db.executescript(_SCHEMA)
+        # Phase-11 T1.B4: idempotently add policy_sha256 column to pre-existing DBs.
+        # SQLite doesn't have IF NOT EXISTS for columns; we swallow the duplicate-column error.
+        try:
+            await db.execute("ALTER TABLE jobs ADD COLUMN policy_sha256 TEXT")
+        except aiosqlite.OperationalError:
+            pass  # column already exists, expected on second boot
         await db.commit()
 
 

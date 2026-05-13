@@ -71,6 +71,8 @@ Voiceover: *"Polaris's Red Team Agent autonomously stress-tests the policy. It f
 Voiceover: *"The Synthesizer regenerates the policy via Gemini — and for the obfuscation class, deterministically closes the regex-DPI blind spot with a single-condition `contains_obfuscation` rule. Other gap classes get pure LLM regeneration. Lobster Trap reloads."*
 
 > **Honesty note (NOT spoken in demo, but referenced in code review):** the obfuscation closure rule is a Python-side deterministic patch (`Synthesizer._inject_obfuscation_closure`) because Gemini's regenerate output reliably emits a compound `contains_obfuscation AND contains_exfiltration` rule that misses encoded payloads (LT's regex DPI can't decode base64). Gemini still runs the regenerate in parallel — the deterministic patch closes the regex-DPI gap *in addition to* whatever Gemini produces.
+>
+> **Additional honesty note on `attacker.example.com`:** the demo's base64 payload decodes to a URL on `attacker.example.com` (RFC-2606 reserved test domain), NOT to `pastebin.com` as in the visual exfiltration narrative. Reason: Phase-10 added a defensive egress rule (`polaris_baseline_block_paste_site_egress`) that catches `pastebin.com` on the LLM's decoded output, which would PREEMPT the intended ingress-side gap. In production the egress rule IS the desired behavior — defense in depth. The demo deliberately swaps to a non-blocklisted domain so the closed-loop narrative (probe 2 = ingress gap → Synth regen → probe 3 = ingress block) is what judges see, not "Rule C also caught it on egress." See `polaris/agents/redteam.py:106-120` for the in-code comment.
 
 **0:46 — 0:51** — Red Team retries the base64 attack. This time, DENIED — red flash, **`block_obfuscated_exfiltration`** rule matched.
 

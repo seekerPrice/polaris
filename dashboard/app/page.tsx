@@ -7,6 +7,28 @@ import { Badge } from "@/components/ui/badge";
 import { Upload, Activity, Bug, FileCheck } from "lucide-react";
 import { API_BASE, uploadPolicy, startRedTeam, type PolarisEvent, type AuditEntry } from "@/lib/api";
 
+// Phase-11 T1.B5 — human-friendly timestamp helper.
+function fmtTime(ts?: string): string {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return ts;
+  const elapsed = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (elapsed < 1) return "just now";
+  if (elapsed < 60) return `${elapsed}s ago`;
+  if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m ago`;
+  return d.toLocaleTimeString();
+}
+
+// Phase-11 T1.B2 — KPI row component above the 4-panel grid.
+function KPI({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="bg-slate-900/70 border border-slate-800 rounded p-3">
+      <div className="text-[10px] uppercase tracking-wider text-slate-400">{label}</div>
+      <div className="text-lg font-semibold text-slate-100 mt-1">{value}</div>
+    </div>
+  );
+}
+
 type ProbeView = {
   phase: "started" | "result";
   probe?: { attack_category?: string; attack_subtype?: string };
@@ -22,6 +44,7 @@ type State = {
   audits: AuditEntry[];
   probes: ProbeView[];
   timing: { startedAt: number | null; deployedMs: number | null };
+  policyHash: string | null;
 };
 
 type Action =
@@ -37,6 +60,7 @@ const init: State = {
   audits: [],
   probes: [],
   timing: { startedAt: null, deployedMs: null },
+  policyHash: null,
 };
 
 function reducer(s: State, ev: Action): State {
@@ -82,6 +106,8 @@ function reducer(s: State, ev: Action): State {
       return { ...s, synth: { ...s.synth, yaml: s.synth.yaml + ev.chunk } };
     case "yaml_reset":
       return { ...s, synth: { ...s.synth, yaml: "" } };
+    case "policy_hash":
+      return { ...s, policyHash: ev.sha256 };
     default:
       return s;
   }
@@ -202,6 +228,16 @@ export default function Page() {
         </p>
       </header>
 
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+        <KPI label="Policies generated" value={state.jobId ? "1" : "0"} />
+        <KPI label="Attacks blocked" value={state.audits.filter((a) => a.verdict === "DENY").length} />
+        <KPI
+          label="Mismatches caught"
+          value={state.audits.filter((a) => a.mismatches && a.mismatches.length > 0).length}
+        />
+        <KPI label="Controls mapped" value={state.reader.n} />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card
           className="p-4 bg-slate-900/70 border-slate-800"
@@ -265,6 +301,22 @@ export default function Page() {
                 <span className="text-[10px] text-slate-400">(SLA: 60s)</span>
               </div>
             )}
+            {state.policyHash && (
+              <div>
+                Policy: <Badge className="bg-slate-700 font-mono text-[10px]">{state.policyHash}</Badge>
+                <span className="text-[10px] text-slate-400 ml-1">(sha256, audit-defensible)</span>
+              </div>
+            )}
+            <div className="text-[10px] text-slate-500 mt-1">
+              <a
+                href="https://github.com/<your-handle>/polaris/blob/main/docs/MODEL_BAKEOFF.md"
+                target="_blank"
+                rel="noreferrer"
+                className="underline hover:text-slate-300"
+              >
+                Why this model? (48-run bake-off)
+              </a>
+            </div>
           </div>
           {state.jobId && (
             <Button className="mt-3" onClick={() => startRedTeam(state.jobId!)}>
@@ -295,7 +347,7 @@ export default function Page() {
                 }`}
               >
                 <div>
-                  <strong>{a.verdict}</strong> {a.matched_rule ?? "—"} · {a.timestamp}
+                  <strong>{a.verdict}</strong> {a.matched_rule ?? "—"} · {fmtTime(a.timestamp)}
                 </div>
                 {a.detected && (
                   <div className="text-[10px] opacity-80 mt-1">
@@ -315,8 +367,11 @@ export default function Page() {
                   </div>
                 )}
                 {a.mismatches && a.mismatches.length > 0 && (
-                  <div className="text-[10px] text-yellow-300 mt-1">
-                    ⚠ mismatches: {a.mismatches.join("; ")}
+                  <div className="mt-1">
+                    <Badge className="bg-red-700 animate-pulse text-[10px]">
+                      ⚠ Declared/Detected mismatch
+                    </Badge>
+                    <div className="text-[10px] text-red-200 mt-1">{a.mismatches.join(" · ")}</div>
                   </div>
                 )}
               </div>

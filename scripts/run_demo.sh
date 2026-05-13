@@ -20,9 +20,15 @@ if [[ -z "${GEMINI_API_KEY:-}" ]]; then
   echo "[run_demo] WARNING: GEMINI_API_KEY is not set — agent calls will fail."
 fi
 
+# Warn if port 3000 is already taken — Next.js silently picks 3001 if the default is in
+# use, which would break the dashboard URL during recording.
+if command -v lsof >/dev/null && lsof -ti:3000 >/dev/null 2>&1; then
+  echo "[run_demo] WARNING: port 3000 already in use — dashboard may bind elsewhere; recording will break."
+fi
+
 trap 'kill 0' EXIT
 uv run uvicorn polaris.utils.openai_gemini_shim:app --port 11434 &
 uv run uvicorn polaris.api.server:app --port 8000 &
-( cd dashboard && npm run dev ) &
+( cd dashboard && PORT=3000 npm run dev ) &
 echo "polaris stack: api 8000, shim 11434, dashboard 3000"
 wait

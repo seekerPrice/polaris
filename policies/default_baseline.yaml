@@ -1,0 +1,49 @@
+version: "1.0"
+policy_name: "polaris-default-baseline"
+default_action: ALLOW
+# Phase-11 T1.B3: known-safe fallback policy. If Synthesizer fails (Gemini outage,
+# validation gate fails 3 retries, or LT respawn rejects the generated YAML), the
+# Polaris API deploys THIS policy instead of leaving the proxy in an undefined state.
+# Mirrors `examples/lobstertrap_baseline_min.yaml` but with explicit injection +
+# system-commands + sensitive-paths denial baked in (LT corpus 11/11 PASS verified).
+ingress_rules:
+  - name: baseline_block_prompt_injection
+    description: "Baseline DENY for any prompt LT classifies as injection (OWASP LLM01)"
+    priority: 1000
+    action: DENY
+    deny_message: "[POLARIS-BASELINE-FALLBACK] Blocked: prompt injection detected."
+    conditions:
+      - field: contains_injection_patterns
+        match_type: boolean
+        value: true
+  - name: baseline_block_system_commands
+    description: "Baseline DENY for dangerous shell commands (rm -rf, sudo, curl|bash)"
+    priority: 999
+    action: DENY
+    deny_message: "[POLARIS-BASELINE-FALLBACK] Blocked: dangerous system command detected."
+    conditions:
+      - field: contains_system_commands
+        match_type: boolean
+        value: true
+  - name: baseline_block_sensitive_paths
+    description: "Baseline DENY for sensitive path access (/etc/, ~/.ssh/, .env, .aws/credentials)"
+    priority: 999
+    action: DENY
+    deny_message: "[POLARIS-BASELINE-FALLBACK] Blocked: sensitive path access denied."
+    conditions:
+      - field: contains_sensitive_paths
+        match_type: boolean
+        value: true
+egress_rules: []
+rate_limits:
+  requests_per_minute: 60
+  requests_per_hour: 1000
+  burst_threshold: 20
+network:
+  egress_policy: denylist
+  allowed_domains: []
+  denied_domains: ["pastebin.com", "*.onion", "transfer.sh", "ngrok.io", "requestbin.com"]
+filesystem:
+  denied_paths: ["/etc/**", "**/.ssh/**", "**/.env", "**/.aws/credentials", "**/.gnupg/**"]
+  allowed_read_paths: []
+  allowed_write_paths: []
