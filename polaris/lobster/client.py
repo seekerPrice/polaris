@@ -86,15 +86,21 @@ class LobsterTrap:
 
             # Race stdout + stderr for the ready signal — upstream LT may log to either.
             async def _wait_for_ready_line(stream) -> bool:
-                # L20 fix (deep-check 2026-05-13): the `:8080` substring could match
-                # `failed to bind :8080: address in use` and false-positive readiness.
-                # Match only LT's canonical `listening on` ready message.
+                # 2026-05-14 fix: empirically verified LT v0.1.0 NEVER prints
+                # "listening on". The actual ready signals are:
+                #   - structured INF log: `starting lobster trap proxy ... listen=:8080`
+                #   - banner header line: `  Lobster Trap v0.1.0`
+                # The earlier L20 fix removed the `:8080` substring match (to avoid
+                # false-positive on `failed to bind :8080`) but replaced it with a
+                # marker LT doesn't actually emit — making readiness ALWAYS time out
+                # at 15s. Match the banner header instead: "lobster trap v" only
+                # appears on the successful-startup path, never in error logs.
                 while True:
                     raw = await stream.readline()
                     if not raw:
                         return False
                     line = raw.decode(errors="ignore").lower()
-                    if "listening on" in line:
+                    if "lobster trap v" in line or "listening on" in line:
                         return True
 
             tasks = [
