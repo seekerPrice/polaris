@@ -223,7 +223,7 @@ Track current phase in this section. Update it as you complete each day.
 - Phase 6: record demo (3 takes via `./scripts/run_demo.sh` → drag soc2_excerpt.pdf or click "Load demo SOC 2 PDF" button on dashboard), build pitch deck PDF from `docs/PITCH_DECK.md`, framing intro
 - Phase 7: lablab.ai submission, GitHub push (`gh repo create polaris --public --push`)
 
-**Reproducible run:** `./scripts/run_demo.sh` brings up the full stack (shim :11434 + API :8000 + dashboard :3000). Open `http://localhost:3000`. End-to-end pipeline (upload → Reader → Synthesizer → LT deploy) completes in ~11 seconds.
+**Reproducible run:** `./scripts/run_demo.sh` brings up the full stack (shim :11434 + API :8000 + dashboard :3030). Open `http://localhost:3030`. End-to-end pipeline (upload → Reader → Synthesizer → LT deploy) completes in ~11 seconds.
 
 See `docs/BUILD_PLAYBOOK.md` for the detailed daily playbook with specific tasks and Claude Code prompts.
 

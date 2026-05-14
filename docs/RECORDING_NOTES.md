@@ -7,7 +7,7 @@
 
 - [ ] All notifications, dock badges, Slack, email — quit/silenced.
 - [ ] Empty desktop. Wallpaper neutral.
-- [ ] Browser windows: `localhost:3000` (Polaris dashboard), nothing else open.
+- [ ] Browser windows: `localhost:3030` (Polaris dashboard), nothing else open.
 - [ ] Terminal: zsh, transparent if dark theme, font ≥18pt for video readability.
 - [ ] `examples/soc2_excerpt.pdf` sits on the desktop, ready to drag.
 - [ ] `examples/customer_feedback_today.txt` already on disk (with the injection).

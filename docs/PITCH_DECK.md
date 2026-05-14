@@ -46,7 +46,7 @@ Below, one-line architecture:
 
 ## Slide 4 — The dashboard
 
-Single full-bleed screenshot of `localhost:3000` mid-demo. Three callout arrows:
+Single full-bleed screenshot of `localhost:3030` mid-demo. Three callout arrows:
 1. *Drag-drop policy upload (top-left)*
 2. *Live YAML synthesis with `lobstertrap test` validation gate (centre)*
 3. *Real-time attack timeline + auto-patching (right)*

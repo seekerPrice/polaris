@@ -90,7 +90,7 @@ cp .env.example .env
 ./scripts/run_demo.sh
 ```
 
-Open `http://localhost:3000` and drag `examples/soc2_excerpt.pdf` onto the upload zone.
+Open `http://localhost:3030` and drag `examples/soc2_excerpt.pdf` onto the upload zone.
 
 ## Sponsors used
 

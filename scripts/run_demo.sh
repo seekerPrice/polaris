@@ -20,12 +20,12 @@ if [[ -z "${GEMINI_API_KEY:-}" ]]; then
   echo "[run_demo] WARNING: GEMINI_API_KEY is not set — agent calls will fail."
 fi
 
-# L33 fix (deep-check 2026-05-13): probe ALL three ports we need (:3000 dashboard,
-# :8000 api, :11434 shim). Previously only :3000 was checked; an Ollama install on
+# L33 fix (deep-check 2026-05-13): probe ALL three ports we need (:3030 dashboard,
+# :8000 api, :11434 shim). Previously only :3030 was checked; an Ollama install on
 # :11434 (default) would silently take over our shim port and the demo would fail
 # with the wrong stack listening on :11434.
 if command -v lsof >/dev/null; then
-  for port in 3000 8000 11434; do
+  for port in 3030 8000 11434; do
     if lsof -ti:"$port" >/dev/null 2>&1; then
       pid=$(lsof -ti:"$port" | head -1)
       echo "[run_demo] WARNING: port :$port already in use by pid $pid — Polaris may bind elsewhere or fail to start."
@@ -40,11 +40,11 @@ trap 'kill 0' EXIT
 # defense in depth so a stray config can't expose it on conference Wi-Fi.
 uv run uvicorn polaris.utils.openai_gemini_shim:app --host 127.0.0.1 --port 11434 &
 uv run uvicorn polaris.api.server:app --port 8000 &
-( cd dashboard && PORT=3000 npm run dev ) &
+( cd dashboard && PORT=3030 npm run dev ) &
 
 # H14 fix (deep-check 2026-05-13): poll each service's readiness before printing
 # "stack ready". Previously the message fired the moment the processes spawned,
-# meaning Lucas could open the browser before Next.js had bound :3000 and hit a
+# meaning Lucas could open the browser before Next.js had bound :3030 and hit a
 # 404 on the recording. Pattern lifted from scripts/verify_live.sh.
 wait_for_http() {
   local label="$1"; local url="$2"; local tries=60
@@ -60,7 +60,7 @@ wait_for_http() {
 }
 wait_for_http "shim    :11434" "http://127.0.0.1:11434/healthz"
 wait_for_http "api     :8000"  "http://127.0.0.1:8000/api/audit-log?limit=1"
-wait_for_http "dashboard :3000" "http://127.0.0.1:3000/"
+wait_for_http "dashboard :3030" "http://127.0.0.1:3030/"
 
-echo "polaris stack ready — api :8000, shim :11434 (loopback-only), dashboard :3000"
+echo "polaris stack ready — api :8000, shim :11434 (loopback-only), dashboard :3030"
 wait

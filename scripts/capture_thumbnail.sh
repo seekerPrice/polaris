@@ -7,7 +7,7 @@
 #   2. In another terminal: bash scripts/capture_thumbnail.sh
 #   3. The script uploads the demo PDF, triggers Red Team, waits for the "money frame"
 #      (audit panel populated + Red Team probes visible + compliance card ready), then
-#      captures localhost:3000 to docs/img/demo_thumbnail.png.
+#      captures localhost:3030 to docs/img/demo_thumbnail.png.
 #
 # Manual fallback (if Chrome MCP isn't available):
 #   - Cmd+Shift+4 (macOS) to draw a screenshot region over the dashboard at the right moment.
@@ -22,8 +22,8 @@ OUT="docs/img/demo_thumbnail.png"
 mkdir -p "$(dirname "$OUT")"
 
 # Sanity checks
-if ! curl -sf http://localhost:3000 >/dev/null 2>&1; then
-  echo "[capture_thumbnail] dashboard not up on :3000 — start ./scripts/run_demo.sh first" >&2
+if ! curl -sf http://localhost:3030 >/dev/null 2>&1; then
+  echo "[capture_thumbnail] dashboard not up on :3030 — start ./scripts/run_demo.sh first" >&2
   exit 1
 fi
 if ! curl -sf http://localhost:8000/api/audit-log >/dev/null 2>&1; then
@@ -81,7 +81,7 @@ if command -v screencapture >/dev/null 2>&1; then
 else
   cat <<EOF >&2
 [capture_thumbnail] screencapture not available (non-macOS host). Manual steps:
-  1. Open http://localhost:3000 in Chrome with the dashboard mid-demo.
+  1. Open http://localhost:3030 in Chrome with the dashboard mid-demo.
   2. Take a screenshot of the four panels (KPI row + upload + audit + Red Team + compliance).
   3. Save as $OUT at 1920x1080 or larger.
 EOF

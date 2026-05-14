@@ -10,7 +10,7 @@ Total length: 60 seconds. Time codes in seconds.
 
 ### Setup (before recording starts)
 
-- Polaris dashboard open in Chromium full-screen at `localhost:3000`.
+- Polaris dashboard open in Chromium full-screen at `localhost:3030`.
 - Lobster Trap real-time dashboard open in a second window at `localhost:8080/_lobstertrap/`.
 - `examples/soc2_excerpt.pdf` sitting on the desktop, ready to drag.
 - `examples/customer_feedback_today.txt` already on disk (with the injection embedded).
