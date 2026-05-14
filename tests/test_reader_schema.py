@@ -3,7 +3,7 @@ from pydantic import ValidationError
 from polaris.agents.reader import PolicyTree, Requirement
 
 
-def test_requirement_accepts_valid_lobster_fields():
+def test_requirement_accepts_valid_lobster_fields() -> None:
     r = Requirement(
         id="REQ-001",
         section="SOC 2 CC6.1",
@@ -17,7 +17,7 @@ def test_requirement_accepts_valid_lobster_fields():
     assert r.lobster_trap_fields == ["contains_credentials", "intent_category"]
 
 
-def test_requirement_rejects_invented_fields():
+def test_requirement_rejects_invented_fields() -> None:
     with pytest.raises(ValidationError):
         Requirement(
             id="REQ-002",
@@ -31,7 +31,7 @@ def test_requirement_rejects_invented_fields():
         )
 
 
-def test_policy_tree_round_trips_json():
+def test_policy_tree_round_trips_json() -> None:
     tree = PolicyTree(
         policy_name="t", source_document="t",
         requirements=[Requirement(

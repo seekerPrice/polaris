@@ -18,7 +18,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.asyncio
-async def test_compliance_report_pdf_renders():
+async def test_compliance_report_pdf_renders() -> None:
     async with httpx.AsyncClient(timeout=180) as client:
         with open(_REPO_ROOT / "examples" / "soc2_excerpt.md", "rb") as f:
             r = await client.post(

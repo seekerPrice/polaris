@@ -12,7 +12,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.mark.asyncio
-async def test_upload_to_deploy_under_120s():
+async def test_upload_to_deploy_under_120s() -> None:
     """SLA: upload → deployed-policy ≤120s (p99 budget). Measured runs across this session:
     50.3s, 55.3s, 73.3s, 92.4s. The README's '60 seconds' is the MEDIAN we observe;
     120s absorbs the worst Synthesizer retry path (gemini-3.1-pro-preview with 32K

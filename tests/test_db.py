@@ -11,7 +11,7 @@ from polaris.utils.db import (
 
 
 @pytest.mark.asyncio
-async def test_db_round_trip(tmp_path: Path):
+async def test_db_round_trip(tmp_path: Path) -> None:
     db = tmp_path / "p.db"
     await init_db(db)
     await record_job(db, "job-1", "soc2.md", status="reading")

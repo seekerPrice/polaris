@@ -9,7 +9,7 @@ class _SmokeSchema(BaseModel):
 
 
 @pytest.mark.asyncio
-async def test_generate_returns_pydantic_instance(monkeypatch):
+async def test_generate_returns_pydantic_instance(monkeypatch) -> None:
     captured: dict = {}
 
     class _FakeModels:
@@ -43,7 +43,7 @@ async def test_generate_returns_pydantic_instance(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_generate_retries_on_5xx(monkeypatch):
+async def test_generate_retries_on_5xx(monkeypatch) -> None:
     calls = {"n": 0}
 
     class _Models:
@@ -77,7 +77,7 @@ async def test_generate_retries_on_5xx(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_generate_raises_after_max_retries(monkeypatch):
+async def test_generate_raises_after_max_retries(monkeypatch) -> None:
     class _Models:
         def generate_content(self, **_):
             raise RuntimeError("500")

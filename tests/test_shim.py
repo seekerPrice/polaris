@@ -7,7 +7,7 @@ class _StubClient:
         return "stub-response"
 
 
-def test_chat_completion_round_trip():
+def test_chat_completion_round_trip() -> None:
     app = build_app(client=_StubClient())  # type: ignore[arg-type]
     c = TestClient(app)
     r = c.post("/v1/chat/completions", json={
@@ -21,7 +21,7 @@ def test_chat_completion_round_trip():
     assert body["object"] == "chat.completion"
 
 
-def test_health():
+def test_health() -> None:
     app = build_app(client=_StubClient())  # type: ignore[arg-type]
     c = TestClient(app)
     r = c.get("/healthz")
@@ -29,7 +29,7 @@ def test_health():
     assert r.json() == {"status": "ok"}
 
 
-def test_extra_fields_ignored():
+def test_extra_fields_ignored() -> None:
     app = build_app(client=_StubClient())  # type: ignore[arg-type]
     c = TestClient(app)
     r = c.post("/v1/chat/completions", json={

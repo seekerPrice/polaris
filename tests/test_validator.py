@@ -14,20 +14,20 @@ GOOD = _UPSTREAM_GOOD.read_text() if _UPSTREAM_GOOD.exists() else Path("examples
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(not _UPSTREAM_GOOD.exists(), reason="needs upstream default policy (run scripts/download_lobstertrap.sh first)")
-async def test_valid_yaml_passes():
+async def test_valid_yaml_passes() -> None:
     res = await validate(GOOD)
     assert res.passed, res.summary
 
 
 @pytest.mark.asyncio
-async def test_unparseable_yaml_fails_layer_1():
+async def test_unparseable_yaml_fails_layer_1() -> None:
     res = await validate("::not yaml::\n  - [")
     assert not res.passed
     assert res.parse_error
 
 
 @pytest.mark.asyncio
-async def test_schema_violation_fails_layer_2():
+async def test_schema_violation_fails_layer_2() -> None:
     bad = GOOD.replace("contains_injection_patterns", "contains_unicorns")
     res = await validate(bad)
     assert not res.passed
@@ -36,7 +36,7 @@ async def test_schema_violation_fails_layer_2():
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(not Path("./bin/lobstertrap").exists(), reason="needs lobstertrap binary")
-async def test_layer_3_runs_subprocess():
+async def test_layer_3_runs_subprocess() -> None:
     """Sanity that layer 3 actually runs the binary even if the policy fails the corpus."""
     minimal = Path("examples/lobstertrap_baseline_min.yaml").read_text()
     res = await validate(minimal)

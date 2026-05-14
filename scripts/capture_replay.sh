@@ -11,7 +11,7 @@
 #
 # The JSON file is consumed by dashboard/app/page.tsx's Cmd+Shift+R handler.
 
-set -uo pipefail
+set -euo pipefail
 
 PDF="${1:-examples/soc2_excerpt.pdf}"
 OUT="dashboard/public/precomputed_run.json"
@@ -28,6 +28,10 @@ fi
 
 echo "[capture_replay] uploading $PDF…"
 JOB=$(curl -sf -F "file=@${PDF}" http://localhost:8000/api/policies/generate | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
+if [ -z "${JOB:-}" ]; then
+  echo "[capture_replay] failed to extract job_id from upload response" >&2
+  exit 1
+fi
 echo "[capture_replay] job_id=$JOB"
 
 mkdir -p "$(dirname "$OUT")"

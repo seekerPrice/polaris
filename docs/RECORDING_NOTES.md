@@ -1,6 +1,6 @@
 # Recording notes — Polaris demo
 
-> Maintained per Phase 5/6 of `/Users/lucaslt/.claude/plans/read-the-whole-repo-eventual-feather.md`.
+> Maintained per Phase 5/6 of the project plan (`~/.claude/plans/read-the-whole-repo-eventual-feather.md`).
 > Append issues found in each take; never delete (history matters when iterating).
 
 ## Take 0 — pre-flight checklist (do before pressing record)

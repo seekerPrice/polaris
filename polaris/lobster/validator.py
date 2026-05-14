@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-import asyncio
-import subprocess
-import tempfile
+import hashlib
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 from pydantic import ValidationError
 
+from polaris.lobster.client import LobsterTrap
 from polaris.lobster.schema import LobsterTrapPolicy
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -33,43 +35,36 @@ class TestResults:
 
 
 async def validate(yaml_text: str, lobstertrap_binary: Path = Path("./bin/lobstertrap")) -> TestResults:
+    yaml_sha = hashlib.sha256(yaml_text.encode("utf-8")).hexdigest()[:12]
+    log.info("validate.start sha=%s len=%d binary=%s", yaml_sha, len(yaml_text), lobstertrap_binary)
+
     # Layer 1 — parse
     try:
         data = yaml.safe_load(yaml_text)
     except yaml.YAMLError as e:
+        log.warning("validate.parse_fail sha=%s err=%s", yaml_sha, e)
         return TestResults(passed=False, parse_error=str(e))
 
     # Layer 2 — Pydantic
     try:
         LobsterTrapPolicy.model_validate(data)
     except ValidationError as e:
+        log.warning("validate.schema_fail sha=%s n_errs=%d", yaml_sha, len(e.errors()))
         return TestResults(passed=False, schema_errors=[str(err) for err in e.errors()])
 
-    # Layer 3 — lobstertrap test
-    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
-        tmp.write(yaml_text)
-        tmp_path = Path(tmp.name)
-    try:
-        proc = await asyncio.to_thread(
-            subprocess.run,
-            [str(lobstertrap_binary), "test", "--policy", str(tmp_path)],
-            capture_output=True, text=True, timeout=60,
-        )
-    except subprocess.TimeoutExpired as e:
-        stdout = (e.stdout or b"").decode(errors="ignore") if isinstance(e.stdout, bytes) else (e.stdout or "")
-        stderr = (e.stderr or b"").decode(errors="ignore") if isinstance(e.stderr, bytes) else (e.stderr or "")
-        return TestResults(
-            passed=False,
-            lt_exit_code=None,
-            lt_stdout=stdout,
-            lt_stderr=f"timeout after 60s: {e}. stderr={stderr[:500]}",
-        )
-    finally:
-        tmp_path.unlink(missing_ok=True)
+    # Layer 3 — lobstertrap test (delegated to LobsterTrap.test_policy so this module
+    # never shells out directly; satisfies CLAUDE.md §6 "all LT interactions via client.py").
+    trap = LobsterTrap(binary=lobstertrap_binary)
+    exit_code, stdout, stderr = await trap.test_policy(yaml_text)
+    if exit_code == -1:
+        log.warning("validate.lt_timeout sha=%s", yaml_sha)
+        return TestResults(passed=False, lt_exit_code=None, lt_stdout=stdout, lt_stderr=stderr)
 
+    passed = exit_code == 0
+    log.info("validate.lt_done sha=%s exit=%d passed=%s", yaml_sha, exit_code, passed)
     return TestResults(
-        passed=(proc.returncode == 0),
-        lt_exit_code=proc.returncode,
-        lt_stdout=proc.stdout,
-        lt_stderr=proc.stderr,
+        passed=passed,
+        lt_exit_code=exit_code,
+        lt_stdout=stdout,
+        lt_stderr=stderr,
     )

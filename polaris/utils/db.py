@@ -1,11 +1,43 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 import aiosqlite
+
+log = logging.getLogger(__name__)
+
+# update_job() builds SQL from caller kwargs; restrict to known mutable columns so a
+# stray kwarg name can't accidentally update `id` / `created_at` or hit a non-existent
+# column. Defense-in-depth — values are still parameterised, so this guards intent not
+# injection.
+_UPDATABLE_JOB_FIELDS = frozenset({
+    "source_filename", "policy_tree_json", "policy_yaml",
+    "declared_intents_json", "status", "policy_sha256",
+})
+
+
+@asynccontextmanager
+async def _connect(path: Path) -> AsyncIterator[aiosqlite.Connection]:
+    """Open aiosqlite with WAL-friendly settings every caller needs.
+
+    busy_timeout is connection-scoped; if record_job / record_audit_entry / update_job
+    each opened plain connections they wouldn't inherit init_db's pragma and would hit
+    'database is locked' under Red Team burst load.
+
+    Usage:  async with _connect(path) as db: ...
+    (The previous `async with await _connect(...) as db` shape started the connection's
+    background thread twice — once via the `await`, once via `__aenter__` — and aiosqlite
+    raised `threads can only be started once`. Wrapping in `@asynccontextmanager` ensures
+    the connection lifecycle is owned by exactly one `async with`.)
+    """
+    async with aiosqlite.connect(path) as db:
+        await db.execute("PRAGMA busy_timeout=30000")
+        yield db
 
 
 _SCHEMA = """
@@ -38,6 +70,8 @@ CREATE TABLE IF NOT EXISTS gaps (
   resolved INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_audit_job ON audit_entries(job_id);
+-- L32 fix (deep-check 2026-05-13): gap queries filter by job_id; add the index.
+CREATE INDEX IF NOT EXISTS idx_gaps_job ON gaps(job_id);
 """
 
 
@@ -64,9 +98,11 @@ async def init_db(path: Path) -> None:
 
 
 async def record_job(path: Path, job_id: str, source_filename: str, status: str = "pending") -> None:
-    async with aiosqlite.connect(path) as db:
+    # INSERT OR IGNORE (not REPLACE): if a job_id collides we keep the original row
+    # rather than wiping policy_tree_json / policy_yaml / policy_sha256 to NULL.
+    async with _connect(path) as db:
         await db.execute(
-            "INSERT OR REPLACE INTO jobs(id, created_at, source_filename, status) VALUES (?,?,?,?)",
+            "INSERT OR IGNORE INTO jobs(id, created_at, source_filename, status) VALUES (?,?,?,?)",
             (job_id, int(time.time()), source_filename, status),
         )
         await db.commit()
@@ -75,23 +111,28 @@ async def record_job(path: Path, job_id: str, source_filename: str, status: str 
 async def update_job(path: Path, job_id: str, **fields: Any) -> None:
     if not fields:
         return
+    invalid = set(fields) - _UPDATABLE_JOB_FIELDS
+    if invalid:
+        raise ValueError(f"update_job rejects unknown column(s): {sorted(invalid)}")
     keys = ", ".join(f"{k}=?" for k in fields)
-    async with aiosqlite.connect(path) as db:
+    async with _connect(path) as db:
         await db.execute(f"UPDATE jobs SET {keys} WHERE id=?", (*fields.values(), job_id))
         await db.commit()
 
 
 async def record_audit_entry(path: Path, job_id: str | None, raw: dict) -> None:
-    async with aiosqlite.connect(path) as db:
+    # L31 fix (deep-check 2026-05-13): `default=str` so a stray Path / datetime / set in
+    # the raw payload doesn't crash the insert. Falls back to repr-ish string.
+    async with _connect(path) as db:
         await db.execute(
             "INSERT INTO audit_entries(job_id, ts, verdict, matched_rule, raw_json) VALUES (?,?,?,?,?)",
-            (job_id, raw.get("timestamp", ""), raw.get("verdict"), raw.get("matched_rule"), json.dumps(raw)),
+            (job_id, raw.get("timestamp", ""), raw.get("verdict"), raw.get("matched_rule"), json.dumps(raw, default=str)),
         )
         await db.commit()
 
 
 async def fetch_audit_entries(path: Path, limit: int = 100, offset: int = 0) -> list[dict]:
-    async with aiosqlite.connect(path) as db:
+    async with _connect(path) as db:
         async with db.execute(
             "SELECT job_id, ts, verdict, matched_rule, raw_json FROM audit_entries "
             "ORDER BY id DESC LIMIT ? OFFSET ?",

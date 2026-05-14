@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import AsyncIterator
 
 from sse_starlette.sse import EventSourceResponse
 
 from polaris.api.state import BUS
+
+log = logging.getLogger(__name__)
 
 
 async def event_stream() -> AsyncIterator[dict]:
@@ -15,7 +18,13 @@ async def event_stream() -> AsyncIterator[dict]:
             ev = await q.get()
             # IMPORTANT: do NOT set "event" — browser EventSource.onmessage only fires for
             # default-named events. The frontend discriminates on JSON.parse(e.data).type.
-            yield {"data": json.dumps(ev)}
+            try:
+                payload = json.dumps(ev, default=str)
+            except (TypeError, ValueError) as e:
+                # An unserialisable event must not kill the stream for every other client.
+                log.warning("sse.serialize_failed type=%s err=%s", type(ev).__name__, e)
+                continue
+            yield {"data": payload}
     finally:
         BUS.unsubscribe(q)
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,8 @@ from pydantic import BaseModel, Field
 from polaris.agents.reader import PolicyTree, _extract_prompt_body
 from polaris.lobster.validator import TestResults, validate
 from polaris.utils.gemini_client import GeminiClient
+
+log = logging.getLogger(__name__)
 
 
 class IntentSchemaTool(BaseModel):
@@ -39,6 +42,18 @@ class SynthesizerResult(BaseModel):
     output: SynthesizerOutput
     test_results_summary: str
     passed: bool
+
+
+class SynthesizerGateError(RuntimeError):
+    """Raised by Synthesizer.process / regenerate when the hard validation gate fails
+    after all retries. The caller in polaris/api/routes.py catches this and publishes
+    a pipeline_error SSE event so the dashboard surfaces the failure instead of
+    spinning forever. Carries the last attempt's YAML + LT-test summary for debugging."""
+
+    def __init__(self, message: str, *, last_yaml: str = "", test_summary: str = "") -> None:
+        super().__init__(message)
+        self.last_yaml = last_yaml
+        self.test_summary = test_summary
 
 
 # Per-agent declared_intent template. See prompts/synthesizer_agent.md "Declared intents schema".
@@ -238,7 +253,7 @@ class Synthesizer:
 
         return yaml.safe_dump(data, sort_keys=False, indent=2, default_flow_style=False)
 
-    async def process(self, tree: PolicyTree, *, max_attempts: int = 2) -> SynthesizerResult:
+    async def process(self, tree: PolicyTree, *, max_attempts: int = 3) -> SynthesizerResult:
         """Schema-first Synthesizer (Phase 9 winner per scripts/bakeoff.py + docs/MODEL_BAKEOFF.md).
 
         Bake-off (48 runs across 8 configs): gemini-3.1-flash-lite + thinking_level="low"
@@ -273,7 +288,17 @@ class Synthesizer:
                 )
             except GeminiCallError as e:
                 if attempt == max_attempts:
-                    raise
+                    # Code-review bug-2 fix (deep-check 2026-05-14): wrap the terminal
+                    # GeminiCallError as SynthesizerGateError so `_pipeline`'s explicit
+                    # handler (which runs the default-baseline fallback to keep LT live)
+                    # actually catches it. Previously this raised raw GeminiCallError,
+                    # hit the generic `except Exception`, and left the firewall bare on
+                    # the demo path when Gemini rate-limits on the final attempt.
+                    raise SynthesizerGateError(
+                        f"Synthesizer Gemini call failed on attempt {attempt}/{max_attempts}: {str(e)[:200]}",
+                        last_yaml=last_yaml,
+                        test_summary=(last.summary if last else f"GeminiCallError: {str(e)[:200]}"),
+                    ) from e
                 prompt = (
                     "PolicyTree input:\n\n" + tree.model_dump_json(indent=2) +
                     f"\n\nPREVIOUS ATTEMPT FAILED: {str(e)[:300]}\n"
@@ -298,13 +323,15 @@ class Synthesizer:
                     passed=True,
                 )
             prompt = self._retry_prompt(tree, patched_yaml, res)
-        return SynthesizerResult(
-            output=SynthesizerOutput(
-                yaml_text=last_yaml or "version: '1.0'\npolicy_name: empty\n",
-                declared_intents=_default_declared_intents(),
-            ),
-            test_results_summary=last.summary if last else "no output",
-            passed=False,
+        # C1 fix (deep-check 2026-05-13): hard-gate per CLAUDE.md §6 — surface failure
+        # to the caller instead of silently returning a stub YAML. The caller (_pipeline
+        # in polaris/api/routes.py) catches this and publishes pipeline_error, so the
+        # dashboard's spinner-forever failure mode is replaced by an explicit error chip.
+        summary = last.summary if last else "no output"
+        raise SynthesizerGateError(
+            f"Synthesizer failed validation gate after {max_attempts} attempts: {summary}",
+            last_yaml=last_yaml,
+            test_summary=summary,
         )
 
     # Single-condition rule for obfuscation-class gaps. Lobster Trap's regex DPI can't
@@ -347,7 +374,12 @@ class Synthesizer:
         return _yaml.safe_dump(data, sort_keys=False, indent=2, default_flow_style=False)
 
     async def regenerate(
-        self, tree: PolicyTree, gap_evidence: dict[str, Any], previous_yaml: str
+        self,
+        tree: PolicyTree,
+        gap_evidence: dict[str, Any],
+        previous_yaml: str,
+        *,
+        max_attempts: int = 3,
     ) -> SynthesizerResult:
         # Lobster Trap's regex DPI cannot decode encoded payloads (base64, ROT13, etc.) —
         # it only sees the opaque encoded string. A COMPOUND rule like
@@ -373,41 +405,79 @@ class Synthesizer:
             "existing rules. Add the minimal set of new rules.\n\n"
             f"Original tree:\n{tree.model_dump_json(indent=2)}"
         )
-        policy: LobsterTrapPolicy = await self._client.generate(
-            prompt=prompt,
-            system_instruction=self._regen_system_prompt,
-            response_schema=LobsterTrapPolicy,
-            model="gemini-3.1-flash-lite",
-            temperature=0.1,
-            thinking={"level": "low"},
-        )
-        yaml_text = yaml.safe_dump(
-            policy.model_dump(mode="json", exclude_none=False),
-            sort_keys=False, indent=2,
-        )
-        patched = self._inject_supplementary_rules(yaml_text)
-        # For obfuscation-class gaps, deterministically add the single-condition rule
-        # because Gemini reliably emits compound rules per Synthesizer prompt Example 5
-        # (which is correct in general but misses encoded-payload attacks).
-        if "base64" in prompt_lower or "decode" in prompt_lower or "obfuscat" in prompt_lower:
-            patched = self._inject_obfuscation_closure(patched)
-        res = await validate(patched)
-        return SynthesizerResult(
-            output=SynthesizerOutput(
-                yaml_text=patched,
-                declared_intents=_default_declared_intents(),
-            ),
-            test_results_summary=res.summary,
-            passed=res.passed,
+        # C2 fix (deep-check 2026-05-13): retry loop mirroring process(). Previously
+        # regenerate() did ONE attempt and returned passed=False on validation failure;
+        # the closed-loop in _patch_policy then hot-reloaded LT with the broken YAML.
+        # Now we retry up to max_attempts and raise on terminal failure so _patch_policy
+        # keeps the previous policy live instead of deploying junk.
+        from polaris.utils.gemini_client import GeminiCallError
+        last: TestResults | None = None
+        patched: str = ""
+        for attempt in range(1, max_attempts + 1):
+            try:
+                policy: LobsterTrapPolicy = await self._client.generate(
+                    prompt=prompt,
+                    system_instruction=self._regen_system_prompt,
+                    response_schema=LobsterTrapPolicy,
+                    model="gemini-3.1-flash-lite",
+                    temperature=0.1,
+                    thinking={"level": "low"},
+                )
+            except GeminiCallError as e:
+                # Code-review bug-2 fix (deep-check 2026-05-14): same wrap as process() —
+                # surface terminal Gemini failures as SynthesizerGateError so _patch_policy
+                # keeps the prior policy live rather than deploying nothing.
+                if attempt == max_attempts:
+                    raise SynthesizerGateError(
+                        f"Synthesizer.regenerate Gemini call failed on attempt {attempt}/{max_attempts}: {str(e)[:200]}",
+                        last_yaml=patched,
+                        test_summary=(last.summary if last else f"GeminiCallError: {str(e)[:200]}"),
+                    ) from e
+                # Non-final attempt: keep the previous prompt and retry.
+                continue
+            yaml_text = yaml.safe_dump(
+                policy.model_dump(mode="json", exclude_none=False),
+                sort_keys=False, indent=2,
+            )
+            patched = self._inject_supplementary_rules(yaml_text)
+            # For obfuscation-class gaps, deterministically add the single-condition rule
+            # because Gemini reliably emits compound rules per Synthesizer prompt Example 5
+            # (which is correct in general but misses encoded-payload attacks).
+            if "base64" in prompt_lower or "decode" in prompt_lower or "obfuscat" in prompt_lower:
+                patched = self._inject_obfuscation_closure(patched)
+            res = await validate(patched)
+            last = res
+            if res.passed:
+                return SynthesizerResult(
+                    output=SynthesizerOutput(
+                        yaml_text=patched,
+                        declared_intents=_default_declared_intents(),
+                    ),
+                    test_results_summary=res.summary,
+                    passed=True,
+                )
+            # Append validation feedback to next attempt's prompt.
+            prompt = (
+                f"REGENERATION MODE (RETRY {attempt}/{max_attempts}).\n\n"
+                f"Previous policy:\n{previous_yaml}\n\n"
+                f"Red Team Agent gap:\n{gap_evidence}\n"
+                f"{obfuscation_hint}"
+                f"PREVIOUS ATTEMPT FAILED VALIDATION: {res.summary}\n\n"
+                "Generate an updated LobsterTrapPolicy that closes the gap AND passes "
+                "lobstertrap test. Keep existing rules; add the minimal set of new rules.\n\n"
+                f"Original tree:\n{tree.model_dump_json(indent=2)}"
+            )
+        summary = last.summary if last else "no output"
+        raise SynthesizerGateError(
+            f"Synthesizer.regenerate failed validation gate after {max_attempts} attempts: {summary}",
+            last_yaml=patched,
+            test_summary=summary,
         )
 
-    @staticmethod
-    def _initial_prompt(tree: PolicyTree) -> str:
-        return (
-            "PolicyTree input:\n\n"
-            + tree.model_dump_json(indent=2)
-            + "\n\nReturn a JSON object with one key: yaml_text — the COMPLETE deployable Lobster Trap YAML policy."
-        )
+    # L1 fix (deep-check 2026-05-13): _initial_prompt was dead code referencing the
+    # pre-Phase-9 `LLMSynthesizerOutput {yaml_text: str}` shape that was abandoned in
+    # favour of schema-first `LobsterTrapPolicy`. process() builds its own prompt
+    # inline at line ~270; nothing else called this. Deleted to avoid future drift.
 
     @staticmethod
     def _retry_prompt(tree: PolicyTree, prev_yaml: str, res: TestResults) -> str:
@@ -423,8 +493,9 @@ class Synthesizer:
                 hints.append("- Use ONLY the 22 fields listed in the system prompt; no inventions.")
             if "deny_message" in el:
                 hints.append("- Every action: DENY rule needs a deny_message string.")
-            if "rule names must be unique" in el:
-                hints.append("- Rule names must be unique across ingress_rules + egress_rules.")
+            if "rule names must be unique" in el or "names must be unique within" in el:
+                # L18 update: uniqueness is now per-direction (ingress and egress can share names).
+                hints.append("- Rule names must be unique WITHIN ingress_rules; egress_rules names unique WITHIN egress_rules. Same name allowed across directions.")
             if "reserved" in el:
                 hints.append("- Do NOT emit MODIFY or REDIRECT actions; they are reserved.")
         if res.lt_stderr:
@@ -433,6 +504,9 @@ class Synthesizer:
             "Previous attempt:\n" + prev_yaml +
             f"\n\nValidation FAILED: {res.summary}\n"
             "Concrete fixes to apply:\n" + "\n".join(hints) + "\n\n"
-            "Return a corrected SynthesizerOutput JSON.\n\n"
+            # L2 fix (deep-check 2026-05-13): was "SynthesizerOutput JSON" — that schema
+            # was removed in Phase 9. The API now constrains output to LobsterTrapPolicy
+            # via response_schema, so this instruction must match the actual contract.
+            "Return a corrected LobsterTrapPolicy that closes the issues above.\n\n"
             "PolicyTree:\n" + tree.model_dump_json(indent=2)
         )

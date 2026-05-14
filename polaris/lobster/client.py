@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import signal
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import AsyncIterator
 
 import aiofiles
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -35,7 +38,10 @@ class LobsterTrap:
         self._binary = binary
         self._listen = listen
         self._backend = backend_url
-        self._audit_log = audit_log_path
+        # L19 fix (deep-check 2026-05-13): resolve to absolute path on construction so a
+        # worker with a different cwd doesn't write to a different audit-log file than
+        # the dashboard reads from.
+        self._audit_log = audit_log_path.resolve()
         self._proc: asyncio.subprocess.Process | None = None
         self._generation = 0
         self._lock = asyncio.Lock()
@@ -80,12 +86,15 @@ class LobsterTrap:
 
             # Race stdout + stderr for the ready signal — upstream LT may log to either.
             async def _wait_for_ready_line(stream) -> bool:
+                # L20 fix (deep-check 2026-05-13): the `:8080` substring could match
+                # `failed to bind :8080: address in use` and false-positive readiness.
+                # Match only LT's canonical `listening on` ready message.
                 while True:
                     raw = await stream.readline()
                     if not raw:
                         return False
                     line = raw.decode(errors="ignore").lower()
-                    if "listening on" in line or ":8080" in line:
+                    if "listening on" in line:
                         return True
 
             tasks = [
@@ -140,17 +149,58 @@ class LobsterTrap:
             await asyncio.gather(*self._drain_tasks, return_exceptions=True)
         self._drain_tasks = []
         if self._proc and self._proc.returncode is None:
+            log.info("lobster.stop gen=%d pid=%d sigterm", self._generation, self._proc.pid)
             self._proc.send_signal(signal.SIGTERM)
             try:
                 await asyncio.wait_for(self._proc.wait(), timeout=5)
             except asyncio.TimeoutError:
+                log.warning("lobster.stop sigterm timed out, escalating to SIGKILL")
                 self._proc.kill()
-                await self._proc.wait()
+                # L21 fix (deep-check 2026-05-13): bound the post-SIGKILL wait so a
+                # kernel-stuck reap doesn't deadlock self._lock forever. Worst case we
+                # leak a zombie but the next spawn() can still acquire the lock.
+                try:
+                    await asyncio.wait_for(self._proc.wait(), timeout=2)
+                except asyncio.TimeoutError:
+                    log.error("lobster.stop SIGKILL also timed out — zombie process pid=%d", self._proc.pid)
         self._proc = None
 
     async def reload(self, policy_path: Path) -> int:
         await self.stop()
         return await self.spawn(policy_path)
+
+    async def test_policy(self, yaml_text: str, *, timeout_s: float = 60.0) -> tuple[int, str, str]:
+        """Run `lobstertrap test --policy <tmp>` over the YAML in-memory.
+
+        Centralises every shell-out to the LT binary in this class (per CLAUDE.md §6:
+        "All Lobster Trap interactions go through polaris/lobster/client.py. Never shell
+        out to lobstertrap from anywhere else.").
+
+        Returns (exit_code, stdout, stderr). exit_code is -1 on timeout.
+        """
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
+            tmp.write(yaml_text)
+            tmp_path = Path(tmp.name)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                str(self._binary), "test", "--policy", str(tmp_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return -1, "", f"timeout after {timeout_s}s"
+            return (
+                proc.returncode if proc.returncode is not None else -1,
+                stdout_b.decode(errors="ignore"),
+                stderr_b.decode(errors="ignore"),
+            )
+        finally:
+            tmp_path.unlink(missing_ok=True)
 
     async def tail_audit_log(self, *, generation: int) -> AsyncIterator[AuditEntry]:
         """Tail the JSONL until LobsterTrap reloads to a new generation. Re-opens the file
@@ -170,13 +220,20 @@ class LobsterTrap:
                 line = await f.readline()
                 if not line:
                     await asyncio.sleep(0.2)
-                    # Re-open if the path now points to a different inode.
+                    # M15 fix (deep-check 2026-05-13): also detect truncation-in-place
+                    # (same inode, size shrank below current offset). The inode-only check
+                    # missed this case → tail spun forever reading empty.
+                    # L23 fix: re-attempt stat each iteration if it failed earlier so
+                    # rotation detection is not permanently disabled by one OSError.
                     try:
-                        cur_ino = self._audit_log.stat().st_ino
-                        if opened_ino is not None and cur_ino != opened_ino:
+                        st = self._audit_log.stat()
+                        if opened_ino is None:
+                            opened_ino = st.st_ino
+                        cur_offset = await f.tell()
+                        if st.st_ino != opened_ino or st.st_size < cur_offset:
                             await f.close()
                             f = await aiofiles.open(self._audit_log, "r")
-                            opened_ino = cur_ino
+                            opened_ino = st.st_ino
                     except OSError:
                         pass
                     continue

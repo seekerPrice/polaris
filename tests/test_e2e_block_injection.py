@@ -12,7 +12,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.mark.asyncio
-async def test_indirect_injection_blocked():
+async def test_indirect_injection_blocked() -> None:
     async with httpx.AsyncClient(timeout=180) as client:
         with open("examples/soc2_excerpt.md", "rb") as f:
             r = await client.post(

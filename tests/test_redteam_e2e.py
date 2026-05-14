@@ -27,7 +27,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.asyncio
-async def test_redteam_finds_gap_and_synth_patches():
+async def test_redteam_finds_gap_and_synth_patches() -> None:
     async with httpx.AsyncClient(timeout=420) as client:
         # 1. Deploy initial policy from SOC 2
         with open(_REPO_ROOT / "examples" / "soc2_excerpt.md", "rb") as f:
@@ -35,9 +35,14 @@ async def test_redteam_finds_gap_and_synth_patches():
                 "http://localhost:8000/api/policies/generate",
                 files={"file": ("soc2.md", f, "text/markdown")},
             )
-        job_id = r.json()["job_id"]
+        r.raise_for_status()
+        upload_body = r.json()
+        assert "job_id" in upload_body, f"upload response missing job_id: {upload_body}"
+        job_id = upload_body["job_id"]
         for _ in range(120):
-            j = (await client.get(f"http://localhost:8000/api/policies/{job_id}")).json()
+            poll = await client.get(f"http://localhost:8000/api/policies/{job_id}")
+            poll.raise_for_status()
+            j = poll.json()
             if "policy.yaml" in j:
                 break
             await asyncio.sleep(2)

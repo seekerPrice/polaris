@@ -15,32 +15,32 @@ class _Stub:
         return "stub"
 
 
-def test_reader_injection_wins_over_singleton():
+def test_reader_injection_wins_over_singleton() -> None:
     stub = _Stub()
     r = Reader(client=stub)  # type: ignore[arg-type]
     assert r._client is stub  # noqa: SLF001
 
 
-def test_synth_injection_wins_over_singleton():
+def test_synth_injection_wins_over_singleton() -> None:
     stub = _Stub()
     s = Synthesizer(client=stub)  # type: ignore[arg-type]
     assert s._client is stub  # noqa: SLF001
 
 
-def test_redteam_injection_wins_over_singleton():
+def test_redteam_injection_wins_over_singleton() -> None:
     stub = _Stub()
     rt = RedTeam(client=stub)  # type: ignore[arg-type]
     assert rt._client is stub  # noqa: SLF001
 
 
-def test_get_client_returns_same_instance_for_same_model():
+def test_get_client_returns_same_instance_for_same_model() -> None:
     from polaris.utils.gemini_client import get_client
     a = get_client("gemini-3.1-flash-lite")
     b = get_client("gemini-3.1-flash-lite")
     assert a is b
 
 
-def test_get_client_returns_different_instances_per_model():
+def test_get_client_returns_different_instances_per_model() -> None:
     from polaris.utils.gemini_client import get_client
     a = get_client("gemini-3.1-flash-lite")
     b = get_client("gemini-2.5-pro")

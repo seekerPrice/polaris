@@ -13,7 +13,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("doc", ["soc2_excerpt.md", "eu_ai_act_excerpt.md", "owasp_llm_top10.md"])
-async def test_reader_extracts_at_least_three_requirements(doc: str):
+async def test_reader_extracts_at_least_three_requirements(doc: str) -> None:
     text = (Path("examples") / doc).read_text(encoding="utf-8")
     tree: PolicyTree = await Reader().process(text)
     assert len(tree.requirements) >= 3, f"{doc}: only {len(tree.requirements)} reqs"

@@ -13,7 +13,7 @@
 #   - Cmd+Shift+4 (macOS) to draw a screenshot region over the dashboard at the right moment.
 #   - Save as docs/img/demo_thumbnail.png at 1920x1080 or larger.
 
-set -uo pipefail
+set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -35,6 +35,10 @@ fi
 echo "[capture_thumbnail] uploading examples/soc2_excerpt.pdf…"
 JOB=$(curl -sf -F "file=@examples/soc2_excerpt.pdf" http://localhost:8000/api/policies/generate \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
+if [ -z "${JOB:-}" ]; then
+  echo "[capture_thumbnail] failed to extract job_id from upload response" >&2
+  exit 1
+fi
 echo "[capture_thumbnail] job=$JOB; waiting ~20s for pipeline + Red Team…"
 
 # Wait for policy.yaml to land
@@ -54,10 +58,25 @@ sleep 35
 
 # Capture. macOS native screencapture is most reliable; falls back to advice if not macOS.
 if command -v screencapture >/dev/null 2>&1; then
-  echo "[capture_thumbnail] capturing localhost:3000 to $OUT (please bring Chrome to focus and stay still)…"
-  echo "[capture_thumbnail] 3 seconds to focus Chrome dashboard window…"
-  sleep 3
-  screencapture -t png -x -m "$OUT"
+  # L35 fix (deep-check 2026-05-13): `-m` captures the whole main display, so the
+  # thumbnail used to include desktop chrome + other windows. Use AppleScript to grab
+  # Chrome's front-window bounds and `screencapture -R x,y,w,h` for a clean crop.
+  # Falls back to `-m` if osascript is unavailable.
+  echo "[capture_thumbnail] focusing Google Chrome to capture its window…"
+  if command -v osascript >/dev/null 2>&1 && osascript -e 'tell application "Google Chrome" to activate' 2>/dev/null; then
+    sleep 1
+    BOUNDS=$(osascript -e 'tell application "Google Chrome" to get the bounds of front window' 2>/dev/null || echo "")
+    if [[ -n "$BOUNDS" ]]; then
+      # AppleScript returns "x1, y1, x2, y2"; convert to "x,y,w,h" for screencapture -R.
+      read -r x1 y1 x2 y2 <<<"${BOUNDS//,/}"
+      W=$((x2 - x1)); H=$((y2 - y1))
+      screencapture -t png -x -R "${x1},${y1},${W},${H}" "$OUT"
+    else
+      sleep 2 && screencapture -t png -x -m "$OUT"
+    fi
+  else
+    sleep 3 && screencapture -t png -x -m "$OUT"
+  fi
   echo "[capture_thumbnail] saved $OUT ($(du -h "$OUT" | cut -f1))"
 else
   cat <<EOF >&2

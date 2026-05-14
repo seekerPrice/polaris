@@ -9,8 +9,11 @@ set -uo pipefail
 cleanup() {
   echo "[verify_live] tearing down…"
   jobs -p | xargs -I{} kill {} 2>/dev/null || true
-  pkill -f "polaris.utils.openai_gemini_shim" 2>/dev/null || true
-  pkill -f "polaris.api.server" 2>/dev/null || true
+  # L39 fix (deep-check 2026-05-13): tighten the pkill patterns so they only match
+  # the actual uvicorn-launch commands. The previous `pkill -f polaris.utils.openai_gemini_shim`
+  # could hit an editor with that filename open or a grep over the source tree.
+  pkill -f "uvicorn polaris.utils.openai_gemini_shim:app" 2>/dev/null || true
+  pkill -f "uvicorn polaris.api.server:app" 2>/dev/null || true
   pkill -f "bin/lobstertrap serve" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM

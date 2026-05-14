@@ -50,9 +50,10 @@ class Condition(BaseModel):
     field: str
     match_type: MatchType
     # Gemini structured-output rejects `Any` (no `type` key in JSON schema). Use a union
-    # of all the concrete value types LT match_types accept: bool (boolean), str (exact/
-    # prefix/glob/regex/contains/range), int+float (threshold), None (rare/optional).
-    value: str | bool | int | float | None = None
+    # of all the concrete value types LT match_types accept. Bool MUST come before str/int
+    # in the union so Pydantic v2's smart-union picks bool for JSON `true`/`false` instead
+    # of coercing to int (true→1). Strings like "true" still validate as str.
+    value: bool | int | float | str | None = None
     negate: bool = False
 
     @field_validator("field")
@@ -61,6 +62,24 @@ class Condition(BaseModel):
         if v not in METADATA_FIELDS:
             raise ValueError(f"unknown metadata field: {v}")
         return v
+
+    @model_validator(mode="after")
+    def _value_type_matches_match_type(self):
+        # L16/L17 fix (deep-check 2026-05-13): enforce match_type ↔ value-type pairing in
+        # Layer 2 so the Synthesizer's retry loop sees a clear Pydantic error instead of
+        # the binary's opaque rejection. boolean→bool, threshold→numeric, everything else
+        # →str. None remains allowed only on non-boolean/threshold types where LT treats
+        # missing as "any value".
+        if self.value is None:
+            return self
+        if self.match_type == MatchType.boolean and not isinstance(self.value, bool):
+            raise ValueError(f"match_type=boolean requires bool value, got {type(self.value).__name__}")
+        if self.match_type == MatchType.threshold:
+            # `isinstance(True, int)` is True in Python — exclude bool explicitly so
+            # `match_type=threshold, value=True` doesn't sneak through as a "numeric".
+            if isinstance(self.value, bool) or not isinstance(self.value, (int, float)):
+                raise ValueError(f"match_type=threshold requires numeric value, got {type(self.value).__name__}")
+        return self
 
 
 # MODIFY/REDIRECT removed from Action enum entirely — Gemini sees the schema's
@@ -113,7 +132,11 @@ class LobsterTrapPolicy(BaseModel):
 
     @model_validator(mode="after")
     def _unique_rule_names(self):
-        names = [r.name for r in self.ingress_rules + self.egress_rules]
-        if len(names) != len(set(names)):
-            raise ValueError("rule names must be unique across ingress and egress")
+        # L18 fix (deep-check 2026-05-13): LT keys rule names by (direction, name) per the
+        # reference doc — so `block_pii` can legitimately exist in both ingress AND egress.
+        # Check uniqueness within each list separately.
+        for kind, rules in (("ingress", self.ingress_rules), ("egress", self.egress_rules)):
+            names = [r.name for r in rules]
+            if len(names) != len(set(names)):
+                raise ValueError(f"{kind}_rules names must be unique within {kind}")
         return self

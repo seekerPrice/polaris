@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -9,6 +10,8 @@ import httpx
 from pydantic import BaseModel, Field
 
 from polaris.utils.gemini_client import GeminiClient
+
+log = logging.getLogger(__name__)
 
 
 class Probe(BaseModel):
@@ -42,7 +45,11 @@ class RedTeam:
         self._client = client
         self._system_prompt: str | None = None
         if self.PROMPT_PATH.exists():
-            self._system_prompt = self.PROMPT_PATH.read_text(encoding="utf-8")
+            # L3 fix (deep-check 2026-05-13): mirror Reader/Synthesizer — strip the file's
+            # top-of-file meta-commentary (everything before the first `## System prompt`
+            # header) so build notes don't leak into the model's system instruction.
+            from polaris.agents.reader import _extract_prompt_body
+            self._system_prompt = _extract_prompt_body(self.PROMPT_PATH.read_text(encoding="utf-8"))
         self._target_url = target_url
 
     def _ensure_client(self) -> GeminiClient:
@@ -61,6 +68,10 @@ class RedTeam:
             f"PREVIOUSLY ATTEMPTED ATTACKS (do not repeat):\n{previously_attempted[-50:]}\n\n"
             "Return a JSON object with 3-5 probes."
         )
+        log.info(
+            "redteam.generate_batch n_audits=%d n_attempted=%d",
+            len(recent_audits), len(previously_attempted),
+        )
         batch: ProbeBatch = await client.generate(
             prompt=prompt,
             system_instruction=self._system_prompt,
@@ -68,6 +79,7 @@ class RedTeam:
             model="gemini-3.1-pro-preview",
             temperature=0.2,
         )
+        log.info("redteam.batch_ready n_probes=%d", len(batch.probes))
         return batch.probes
 
     async def fire(self, probe: Probe) -> ProbeResult:
@@ -83,22 +95,40 @@ class RedTeam:
                     },
                 },
             )
-        # Lobster Trap returns HTTP 200 OK on DENY, putting the verdict in the JSON
-        # body's `_lobstertrap.verdict` (or `.ingress.action`) field — NOT in status_code.
+        # H9 fix (deep-check 2026-05-13): differentiate three exit states so we don't
+        # confuse infrastructure failures with policy enforcement.
+        #   - LT-block surface (HTTP 403 with `_lobstertrap.verdict=DENY` body) → DENY
+        #   - HTTP 5xx (LT crash, shim crash, upstream Gemini outage)            → ERROR
+        #   - HTTP 200 with verdict ∈ {DENY, HUMAN_REVIEW, RATE_LIMIT}            → BLOCKED-class
+        #   - HTTP 200 with verdict=ALLOW (or unknown body)                      → ALLOW
+        # Previously `>= 400` mapped 5xx outages to DENY, hiding LT/shim failures from
+        # the closed-loop, and verdicts other than DENY were silently mapped to ALLOW,
+        # producing false "gap" reports that triggered spurious regenerations.
         actual = "ALLOW"
-        if r.status_code >= 400:
-            actual = "DENY"
+        if r.status_code >= 500:
+            actual = "ERROR"
+        elif r.status_code >= 400:
+            actual = "DENY"  # LT typically returns 403 on its policy block
         else:
             try:
                 body = r.json()
                 lt = body.get("_lobstertrap", {}) if isinstance(body, dict) else {}
                 ingress = lt.get("ingress", {}) if isinstance(lt, dict) else {}
                 verdict = lt.get("verdict") or ingress.get("action") or "ALLOW"
-                if verdict == "DENY":
-                    actual = "DENY"
+                if verdict in {"DENY", "HUMAN_REVIEW", "RATE_LIMIT"}:
+                    actual = verdict
+                elif verdict != "ALLOW":
+                    # Unknown verdict — treat as ALLOW for gap detection but it's
+                    # a contract drift signal worth flagging if it happens repeatedly.
+                    actual = "ALLOW"
             except (ValueError, KeyError):
-                pass
-        is_gap = probe.expected_verdict == "DENY" and actual == "ALLOW"
+                # Malformed JSON body — don't pretend it's a successful block.
+                actual = "ALLOW"
+        # A probe is a gap if it expected a blocked-class verdict but actually got ALLOW.
+        # Errors don't count as gaps (the firewall might be working; we just couldn't
+        # tell because the infrastructure failed).
+        blocked = {"DENY", "HUMAN_REVIEW", "RATE_LIMIT"}
+        is_gap = probe.expected_verdict in blocked and actual == "ALLOW"
         return ProbeResult(probe=probe, actual_verdict=actual, is_gap=is_gap)
 
     async def demo_sequence(

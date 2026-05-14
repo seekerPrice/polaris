@@ -3,9 +3,17 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape as _xml_escape
 
 import yaml
 from reportlab.lib import colors
+
+
+# H11 fix (deep-check 2026-05-13): ReportLab's Paragraph parses an HTML-like markup.
+# Any `<` or `&` in PDF-extracted text crashes rendering or produces garbled output.
+# Wrap every dynamic interpolation through this helper before it lands in a Paragraph.
+def _esc(s: Any) -> str:
+    return _xml_escape(str(s)) if s is not None else ""
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import (
@@ -97,8 +105,8 @@ def render_compliance_report(
 
     # ───── Cover ──────────────────────────────────────────────────────────
     flow.append(Paragraph("<b>POLARIS COMPLIANCE REPORT</b>", styles["Title"]))
-    flow.append(Paragraph(f"Policy: <b>{tree.policy_name}</b>", styles["Normal"]))
-    flow.append(Paragraph(f"Source: {tree.source_document}", styles["Normal"]))
+    flow.append(Paragraph(f"Policy: <b>{_esc(tree.policy_name)}</b>", styles["Normal"]))
+    flow.append(Paragraph(f"Source: {_esc(tree.source_document)}", styles["Normal"]))
     flow.append(Paragraph(
         f"Generated: {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
         styles["Normal"],
@@ -143,7 +151,8 @@ def render_compliance_report(
         table_rows: list[list[str]] = [["ID", "Section", "Severity", "Mapped rule(s)"]]
         for row in rows:
             mapped = "\n".join(row["mapped_rules"]) if row["mapped_rules"] else "— GAP —"
-            table_rows.append([row["id"], row["section"], row["severity"].upper(), mapped])
+            # H11 fix (deep-check): escape <, & in PDF-extracted strings.
+            table_rows.append([_esc(row["id"]), _esc(row["section"]), _esc(row["severity"].upper()), _esc(mapped)])
         t = Table(table_rows, hAlign="LEFT", colWidths=[55, 140, 60, 245])
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
@@ -160,7 +169,7 @@ def render_compliance_report(
     if gaps:
         for g in gaps:
             flow.append(Paragraph(
-                f"<b>{g['id']}</b> ({g['section']}, {g['severity']}): {g['requirement']}",
+                f"<b>{_esc(g['id'])}</b> ({_esc(g['section'])}, {_esc(g['severity'])}): {_esc(g['requirement'])}",
                 styles["Normal"],
             ))
     else:
@@ -169,14 +178,36 @@ def render_compliance_report(
     # ───── Enforcement evidence ───────────────────────────────────────────
     flow.append(Spacer(1, 24))
     flow.append(Paragraph("<b>Enforcement evidence (last 10 DENYs)</b>", styles["Heading2"]))
-    denies = [a for a in audit_entries if a.get("verdict") == "DENY"][:10]
+    # L6 fix (deep-check): sort by timestamp desc so the report shows the MOST recent
+    # 10 DENYs, not whichever 10 happen to be at the head/tail of the caller's order.
+    all_denies = [a for a in audit_entries if a.get("verdict") == "DENY"]
+    denies = sorted(all_denies, key=lambda d: d.get("timestamp", ""), reverse=True)[:10]
     if not denies:
         flow.append(Paragraph("(none yet — system has not blocked any traffic)", styles["Normal"]))
     for d in denies:
         flow.append(Paragraph(
-            f"{d.get('timestamp', '')} — rule={d.get('matched_rule', '')}",
+            f"{_esc(d.get('timestamp', ''))} — rule={_esc(d.get('matched_rule', ''))}",
             styles["Code"],
         ))
 
     doc = SimpleDocTemplate(str(out_path), pagesize=letter)
     doc.build(flow)
+
+
+class AuditorAgent:
+    """Renders compliance PDF reports mapping requirements to deployed rules.
+
+    Per CLAUDE.md §6, every agent in polaris/agents/ is a class with a single
+    async process() method. The actual rendering remains in render_compliance_report
+    (used by polaris.api.routes); process() is a thin async shim so the four-agent
+    set (Reader, Synthesizer, RedTeam, Auditor) is consistent.
+    """
+
+    async def process(
+        self,
+        tree: PolicyTree,
+        audit_entries: list[dict],
+        out_path: Path,
+        policy_yaml: str | None = None,
+    ) -> None:
+        render_compliance_report(tree, audit_entries, out_path, policy_yaml=policy_yaml)
