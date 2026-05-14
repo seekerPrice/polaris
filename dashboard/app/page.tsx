@@ -48,12 +48,22 @@ type State = {
   timing: { startedAt: number | null; deployedMs: number | null };
   policyHash: string | null;
   policiesGenerated: number;
+  // H13/H2 fix (deep-check 2026-05-13): surface error states instead of leaving the
+  // UI sat at "idle" / spinning forever. `error` is for client-side fetch failures;
+  // `pipelineError` is the SSE-delivered server-side stage failure.
+  error: string | null;
+  pipelineError: { stage: string; error: string; test_summary?: string } | null;
+  // M23 fix (deep-check 2026-05-13): SSE reconnect status so a server restart between
+  // demo takes is visible to the operator instead of silently making the dashboard idle.
+  sseStatus: "connected" | "reconnecting";
 };
 
 type Action =
   | { type: "set_job"; jobId: string }
   | { type: "yaml_chunk"; chunk: string }
   | { type: "yaml_reset" }
+  | { type: "client_error"; error: string | null }
+  | { type: "sse_status"; status: "connected" | "reconnecting" }
   | PolarisEvent;
 
 const init: State = {
@@ -65,18 +75,22 @@ const init: State = {
   timing: { startedAt: null, deployedMs: null },
   policyHash: null,
   policiesGenerated: 0,
+  error: null,
+  pipelineError: null,
+  sseStatus: "connected",
 };
 
 function reducer(s: State, ev: Action): State {
   switch (ev.type) {
     case "set_job":
-      // Preserve the running policy counter across uploads so the KPI is a real count,
-      // not a 0/1 toggle. Other run-scoped state resets via `...init`.
+      // L42 fix (deep-check 2026-05-13): preserve the running counter, but DO NOT bump
+      // on upload — bump only on `lobstertrap_deployed` (below) so the KPI reflects
+      // policies that actually went live, not in-flight uploads that may fail.
       return {
         ...init,
         jobId: ev.jobId,
         timing: { startedAt: Date.now(), deployedMs: null },
-        policiesGenerated: s.policiesGenerated + 1,
+        policiesGenerated: s.policiesGenerated,
       };
     case "reader_progress":
       return { ...s, reader: { status: ev.status, n: ev.n_requirements ?? s.reader.n } };
@@ -90,10 +104,14 @@ function reducer(s: State, ev: Action): State {
         s.timing.startedAt !== null && s.timing.deployedMs === null
           ? Date.now() - s.timing.startedAt
           : s.timing.deployedMs;
+      // L42 fix: bump policy counter here, not on upload — only counts policies
+      // that successfully made it to a live LT generation.
+      const isFirstDeployForJob = s.timing.deployedMs === null;
       return {
         ...s,
         synth: { ...s.synth, status: "deployed" },
         timing: { ...s.timing, deployedMs },
+        policiesGenerated: isFirstDeployForJob ? s.policiesGenerated + 1 : s.policiesGenerated,
       };
     }
     case "lobstertrap_reloaded":
@@ -123,6 +141,18 @@ function reducer(s: State, ev: Action): State {
       const v: ProbeView = { phase: "result", attack_category: `aborted: ${ev.reason}` };
       return { ...s, probes: [v, ...s.probes].slice(0, 50) };
     }
+    case "pipeline_error":
+      // H2/C1/C2 fix: server stage failure. Show as red banner; UI stops spinning.
+      return {
+        ...s,
+        pipelineError: { stage: ev.stage, error: ev.error, test_summary: ev.test_summary },
+        synth: s.synth.status === "idle" ? s.synth : { ...s.synth, status: "failed" },
+        reader: s.reader.status === "idle" ? s.reader : { ...s.reader, status: s.reader.status === "started" ? "failed" : s.reader.status },
+      };
+    case "client_error":
+      return { ...s, error: ev.error };
+    case "sse_status":
+      return { ...s, sseStatus: ev.status };
     default:
       return s;
   }
@@ -131,9 +161,16 @@ function reducer(s: State, ev: Action): State {
 export default function Page() {
   const [state, dispatch] = useReducer(reducer, init);
   const yamlAnimating = useRef(false);
+  // L36 fix (deep-check 2026-05-13): show a visible "drop zone armed" state so the
+  // demo audience can see the drag was registered. Cleared on drop/leave/end.
+  const [isDragging, setIsDragging] = useReducer(
+    (_: boolean, v: boolean) => v,
+    false,
+  );
 
   useEffect(() => {
     const es = new EventSource(`${API_BASE}/api/events`);
+    es.onopen = () => dispatch({ type: "sse_status", status: "connected" });
     es.onmessage = (e) => {
       try {
         const ev = JSON.parse(e.data);
@@ -142,6 +179,9 @@ export default function Page() {
         /* ignore malformed */
       }
     };
+    // M23 fix: EventSource auto-reconnects but never tells the user. Surface the
+    // "reconnecting" state so a server restart between demo takes is visible.
+    es.onerror = () => dispatch({ type: "sse_status", status: "reconnecting" });
     return () => es.close();
   }, []);
 
@@ -243,33 +283,86 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.synth.status, state.jobId]);
 
   async function onDrop(e: React.DragEvent) {
     e.preventDefault();
+    setIsDragging(false);
     const f = e.dataTransfer.files[0];
     if (!f) return;
-    const { job_id } = await uploadPolicy(f);
-    dispatch({ type: "set_job", jobId: job_id });
+    // H13 fix (deep-check 2026-05-13): wrap in try/catch so an API outage / 4xx
+    // surfaces as a red banner instead of leaving the dashboard sat at "Reader: idle"
+    // forever, indistinguishable from in-progress.
+    try {
+      dispatch({ type: "client_error", error: null });
+      const { job_id } = await uploadPolicy(f);
+      dispatch({ type: "set_job", jobId: job_id });
+    } catch (err) {
+      dispatch({ type: "client_error", error: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
+    // L34 fix (deep-check 2026-05-13): reset the input value so picking the same
+    // file twice fires a second onChange.
+    e.target.value = "";
     if (!f) return;
-    const { job_id } = await uploadPolicy(f);
-    dispatch({ type: "set_job", jobId: job_id });
+    try {
+      dispatch({ type: "client_error", error: null });
+      const { job_id } = await uploadPolicy(f);
+      dispatch({ type: "set_job", jobId: job_id });
+    } catch (err) {
+      dispatch({ type: "client_error", error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  async function onStartRedTeam() {
+    if (!state.jobId) return;
+    try {
+      dispatch({ type: "client_error", error: null });
+      await startRedTeam(state.jobId);
+    } catch (err) {
+      dispatch({ type: "client_error", error: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-950 to-slate-900 text-slate-100 p-6">
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          Polaris — From SOC 2 PDF to live AI guardrail in 60 seconds
-        </h1>
-        <p className="text-sm text-slate-400">
-          Veea Trust Track · Powered by Google Gemini & Lobster Trap
-        </p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Polaris — From SOC 2 PDF to live AI guardrail in 60 seconds
+            </h1>
+            <p className="text-sm text-slate-400">
+              Veea Trust Track · Powered by Google Gemini & Lobster Trap
+            </p>
+          </div>
+          {state.sseStatus === "reconnecting" && (
+            <Badge className="bg-amber-600">Reconnecting…</Badge>
+          )}
+        </div>
+        {(state.error || state.pipelineError) && (
+          <div className="mt-3 rounded border border-red-700/60 bg-red-950/40 text-red-200 text-sm p-3">
+            {state.error && (
+              <div>
+                <span className="font-semibold">Client error:</span> {state.error}
+              </div>
+            )}
+            {state.pipelineError && (
+              <div>
+                <span className="font-semibold">Pipeline failed at {state.pipelineError.stage}:</span>{" "}
+                {state.pipelineError.error}
+                {state.pipelineError.test_summary && (
+                  <div className="text-xs text-red-300/80 mt-1">
+                    LT test: {state.pipelineError.test_summary.slice(0, 200)}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </header>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
@@ -284,8 +377,14 @@ export default function Page() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card
-          className="p-4 bg-slate-900/70 border-slate-800"
-          onDragOver={(e) => e.preventDefault()}
+          className={`p-4 bg-slate-900/70 border-slate-800 transition-colors ${
+            isDragging ? "ring-2 ring-emerald-400 bg-slate-900" : ""
+          }`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (!isDragging) setIsDragging(true);
+          }}
+          onDragLeave={() => setIsDragging(false)}
           onDrop={onDrop}
         >
           <div className="flex items-center gap-2 mb-3">
@@ -356,7 +455,7 @@ export default function Page() {
             </div>
           </div>
           {state.jobId && (
-            <Button className="mt-3" onClick={() => startRedTeam(state.jobId!)}>
+            <Button className="mt-3" onClick={onStartRedTeam}>
               Start Red Team
             </Button>
           )}
@@ -377,8 +476,11 @@ export default function Page() {
               <div className="text-xs text-slate-500">Waiting for the first request through Lobster Trap…</div>
             )}
             {state.audits.map((a, i) => (
+              // L41 fix (deep-check 2026-05-13): key on timestamp+i, not just index.
+              // New entries prepend to the array; using only `i` makes the animate-pulse
+              // mismatch badge rebind to the wrong row across renders.
               <div
-                key={i}
+                key={`${a.timestamp ?? ""}::${i}`}
                 className={`text-xs p-2 rounded ${
                   a.verdict === "DENY" ? "bg-red-950 text-red-200" : "bg-slate-800"
                 }`}
@@ -387,7 +489,11 @@ export default function Page() {
                   <strong>{a.verdict}</strong> {a.matched_rule ?? "—"} · {fmtTime(a.timestamp)}
                 </div>
                 {a.detected && (
-                  <div className="text-[10px] opacity-80 mt-1">
+                  // M24 fix (deep-check 2026-05-13): text-[10px] + text-slate-500/opacity-70
+                  // on bg-slate-900 fails readable-text contrast on the recording. Bump to
+                  // text-xs (12px) and lift the foreground from slate-500/opacity-70 to
+                  // slate-300 so the demo metadata stays legible on a 1920×1080 capture.
+                  <div className="text-xs text-slate-300 mt-1">
                     detected: intent={a.detected.intent_category} risk=
                     {a.detected.risk_score?.toFixed?.(2)}
                     {a.detected.target_domains?.length
@@ -399,16 +505,16 @@ export default function Page() {
                   </div>
                 )}
                 {a.declared && (
-                  <div className="text-[10px] opacity-70">
+                  <div className="text-xs text-slate-300">
                     declared: {a.declared.declared_intent} (agent={a.declared.agent_id})
                   </div>
                 )}
                 {a.mismatches && a.mismatches.length > 0 && (
                   <div className="mt-1">
-                    <Badge className="bg-red-700 animate-pulse text-[10px]">
+                    <Badge className="bg-red-700 animate-pulse text-xs">
                       ⚠ Declared/Detected mismatch
                     </Badge>
-                    <div className="text-[10px] text-red-200 mt-1">{a.mismatches.join(" · ")}</div>
+                    <div className="text-xs text-red-100 mt-1">{a.mismatches.join(" · ")}</div>
                   </div>
                 )}
               </div>
@@ -427,7 +533,8 @@ export default function Page() {
             )}
             {state.probes.map((p, i) => (
               <div
-                key={i}
+                // L41 fix: stable composite key — phase + index in prepended list.
+                key={`${p.phase}::${p.attack_category ?? ""}::${i}`}
                 className={`text-xs p-2 rounded ${
                   p.is_gap ? "bg-yellow-950 text-yellow-200" : "bg-slate-800"
                 }`}
