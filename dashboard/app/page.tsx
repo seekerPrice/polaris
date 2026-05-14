@@ -71,6 +71,44 @@ export default function Page() {
     if (state.jobId === null) chimePlayed.current = false;
   }, [state.jobId]);
 
+  // ----- Real-upload YAML streaming -----
+  // On a real backend upload, the server's SSE only emits `synthesizer_progress`
+  // (status transitions) and `policy_hash` — never the YAML content itself. The
+  // YamlEditor renders `state.synth.yaml`; nothing populates that until this
+  // effect fetches /api/policies/{job} and dispatches yaml_chunk line by line.
+  // (The replay path in lib/replay.ts dispatches yaml_chunk directly — that's
+  // why "Run demo" worked before this effect existed.)
+  // 2026-05-14 stress-test fix: missed during the UI revamp; re-added so real
+  // uploads also visually stream the YAML (demo beat 3 on a live recording).
+  const yamlAnimating = useRef(false);
+  useEffect(() => {
+    const status = state.synth.status;
+    const streamable = status === "completed" || status === "deployed" || status === "reloaded";
+    if (!streamable) return;
+    if (!state.jobId || yamlAnimating.current) return;
+    yamlAnimating.current = true;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const j = await fetch(`${API_BASE}/api/policies/${state.jobId}`).then((r) => r.json());
+        const yaml: string = j["policy.yaml"] ?? "";
+        for (const line of yaml.split("\n")) {
+          if (cancelled) break;
+          await new Promise((r) => setTimeout(r, 60));
+          dispatch({ type: "yaml_chunk", chunk: line + "\n" });
+        }
+      } finally {
+        yamlAnimating.current = false;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // state.synth.yaml deliberately omitted — it's the WRITE target of this effect.
+    // Including it would cancel the streamer on every chunk dispatched.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.synth.status, state.jobId]);
+
   // ----- Cmd+Shift+P stage-day replay fallback (loads precomputed_run.json) -----
   // Production replay path is the topbar "Run demo" button (uses lib/replay.ts
   // with hardcoded fixtures). This shortcut replays a REAL captured run for
