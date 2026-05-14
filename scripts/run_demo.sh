@@ -16,8 +16,18 @@ if [[ ! -x ./bin/lobstertrap ]]; then
   echo "[run_demo] lobstertrap binary missing — running download script first"
   ./scripts/download_lobstertrap.sh
 fi
+# Auto-load .env so the bash-level GEMINI_API_KEY check below sees what Python will
+# load via dotenv at import time (polaris/utils/gemini_client.py:14). Without this,
+# the script would print a false-alarm WARNING even though the Python process picks
+# the key up at runtime. Pattern mirrors scripts/verify_live.sh.
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
 if [[ -z "${GEMINI_API_KEY:-}" ]]; then
-  echo "[run_demo] WARNING: GEMINI_API_KEY is not set — agent calls will fail."
+  echo "[run_demo] WARNING: GEMINI_API_KEY is not set in env or .env — agent calls will fail."
 fi
 
 # L33 fix (deep-check 2026-05-13): probe ALL three ports we need (:3030 dashboard,
