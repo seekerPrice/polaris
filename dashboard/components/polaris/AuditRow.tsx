@@ -36,6 +36,9 @@ export function AuditRow({ entry }: { entry: AuditEntry }) {
           {entry.detected.target_domains?.length ? (
             <span>domains=<code>{entry.detected.target_domains.join(",")}</code></span>
           ) : null}
+          {entry.detected.target_paths?.length ? (
+            <span>paths=<code>{entry.detected.target_paths.join(",")}</code></span>
+          ) : null}
         </div>
       )}
       {entry.declared && (
