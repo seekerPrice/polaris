@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+import asyncio
 import httpx
 from pydantic import BaseModel, Field
 
@@ -87,11 +88,12 @@ class RedTeam:
         # gate stretched the reload window from ~50ms to ~3s, exposing this
         # latent race). Retry connection-class failures briefly so a benign
         # reload doesn't mask as an ERROR verdict and tank coverage metrics.
-        import asyncio as _aio
+        # 3 attempts × 0.5/1.0/1.5s = ~3s cumulative — matches the typical LT
+        # reload window; longer outages correctly surface as ERROR.
         async with httpx.AsyncClient(timeout=60) as c:
             last_exc: Exception | None = None
             r = None
-            for attempt in range(5):
+            for attempt in range(3):
                 try:
                     r = await c.post(
                         self._target_url,
@@ -109,7 +111,7 @@ class RedTeam:
                 except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
                     last_exc = exc
                     log.info("redteam.fire connect retry %d: %r", attempt + 1, exc)
-                    await _aio.sleep(0.5 * (attempt + 1))
+                    await asyncio.sleep(0.5 * (attempt + 1))
             if r is None:
                 log.warning("redteam.fire gave up after retries: %r", last_exc)
                 return ProbeResult(probe=probe, actual_verdict="ERROR", is_gap=False)
