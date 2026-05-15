@@ -83,18 +83,36 @@ class RedTeam:
         return batch.probes
 
     async def fire(self, probe: Probe) -> ProbeResult:
+        # Phase-12 fix: LT may be mid-reload when this probe lands (the consent
+        # gate stretched the reload window from ~50ms to ~3s, exposing this
+        # latent race). Retry connection-class failures briefly so a benign
+        # reload doesn't mask as an ERROR verdict and tank coverage metrics.
+        import asyncio as _aio
         async with httpx.AsyncClient(timeout=60) as c:
-            r = await c.post(
-                self._target_url,
-                json={
-                    "model": "gemini-3.1-flash-lite",
-                    "messages": [{"role": "user", "content": probe.prompt}],
-                    "_lobstertrap": {
-                        "declared_intent": "general",
-                        "agent_id": "redteam-v1",
-                    },
-                },
-            )
+            last_exc: Exception | None = None
+            r = None
+            for attempt in range(5):
+                try:
+                    r = await c.post(
+                        self._target_url,
+                        json={
+                            "model": "gemini-3.1-flash-lite",
+                            "messages": [{"role": "user", "content": probe.prompt}],
+                            "_lobstertrap": {
+                                "declared_intent": "general",
+                                "agent_id": "redteam-v1",
+                            },
+                        },
+                    )
+                    last_exc = None
+                    break
+                except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+                    last_exc = exc
+                    log.info("redteam.fire connect retry %d: %r", attempt + 1, exc)
+                    await _aio.sleep(0.5 * (attempt + 1))
+            if r is None:
+                log.warning("redteam.fire gave up after retries: %r", last_exc)
+                return ProbeResult(probe=probe, actual_verdict="ERROR", is_gap=False)
         # H9 fix (deep-check 2026-05-13): differentiate three exit states so we don't
         # confuse infrastructure failures with policy enforcement.
         #   - LT-block surface (HTTP 403 with `_lobstertrap.verdict=DENY` body) → DENY

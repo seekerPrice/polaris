@@ -141,6 +141,38 @@ async def events():
     return sse_response()
 
 
+# Phase-12 reviewer follow-up: STATIC routes MUST be registered before path-param
+# routes (FastAPI matches in registration order). Otherwise GET /api/policies/packs
+# is captured by `/api/policies/{job_id}` (`job_id` = "packs") and returns 404 from
+# _validate_job_id. Same reason POST /api/policies/packs/{name}/deploy lives here.
+@router.get("/api/policies/packs")
+async def list_packs():
+    if not _BUILTIN_PACKS_DIR.exists():
+        return {"packs": []}
+    packs = []
+    for p in sorted(_BUILTIN_PACKS_DIR.glob("*.yaml")):
+        if _PACK_NAME_RE.match(p.stem):
+            packs.append({"name": p.stem, "filename": p.name})
+    return {"packs": packs}
+
+
+@router.post("/api/policies/packs/{name}/deploy")
+async def deploy_pack(name: str):
+    if not _PACK_NAME_RE.match(name):
+        raise HTTPException(400, "invalid pack name")
+    safe_path = (_BUILTIN_PACKS_DIR / f"{name}.yaml").resolve()
+    if not safe_path.is_file() or safe_path.parent != _BUILTIN_PACKS_DIR.resolve():
+        raise HTTPException(404, f"pack '{name}' not found")
+    job_id = uuid.uuid4().hex[:12]
+    job_dir = ARTIFACTS / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    pol_path = job_dir / "policy.yaml"
+    pol_path.write_text(safe_path.read_text(encoding="utf-8"), encoding="utf-8")
+    await record_job(DB_PATH, job_id, f"pack:{name}", status="validated")
+    _spawn_background(_pack_deploy_pipeline(job_id, pol_path, name), label=f"pack_deploy:{job_id}")
+    return {"job_id": job_id, "pack": name}
+
+
 @router.post("/api/policies/generate")
 async def generate(file: UploadFile = File(...)):
     job_id = uuid.uuid4().hex[:12]
@@ -252,40 +284,6 @@ async def block_quarantine(entry_id: int, req: _QuarantineDecisionReq):
         "entry_id": entry_id, "decision": "BLOCK", "approver": req.approver,
     })
     return {"blocked": True}
-
-
-# Phase-12 T6: pre-built policy pack endpoints. Packs skip the Reader+Synthesizer
-# pipeline (no PDF to parse, no Gemini call) and deploy a pre-validated YAML
-# through the same consent gate. Demo insurance against PDF parse failure;
-# also matches Veea brief verbatim ("policy packs for HIPAA, SOC2, or finance").
-@router.get("/api/policies/packs")
-async def list_packs():
-    if not _BUILTIN_PACKS_DIR.exists():
-        return {"packs": []}
-    packs = []
-    for p in sorted(_BUILTIN_PACKS_DIR.glob("*.yaml")):
-        if _PACK_NAME_RE.match(p.stem):
-            packs.append({"name": p.stem, "filename": p.name})
-    return {"packs": packs}
-
-
-@router.post("/api/policies/packs/{name}/deploy")
-async def deploy_pack(name: str):
-    if not _PACK_NAME_RE.match(name):
-        raise HTTPException(400, "invalid pack name")
-    safe_path = (_BUILTIN_PACKS_DIR / f"{name}.yaml").resolve()
-    if not safe_path.is_file() or safe_path.parent != _BUILTIN_PACKS_DIR.resolve():
-        raise HTTPException(404, f"pack '{name}' not found")
-    job_id = uuid.uuid4().hex[:12]
-    job_dir = ARTIFACTS / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
-    pol_path = job_dir / "policy.yaml"
-    # Explicit encoding on both ends (reviewer M2).
-    pol_path.write_text(safe_path.read_text(encoding="utf-8"), encoding="utf-8")
-    await record_job(DB_PATH, job_id, f"pack:{name}", status="validated")
-    # Reviewer I1 — same rationale as /generate above.
-    _spawn_background(_pack_deploy_pipeline(job_id, pol_path, name), label=f"pack_deploy:{job_id}")
-    return {"job_id": job_id, "pack": name}
 
 
 async def _pack_deploy_pipeline(job_id: str, pol_path: Path, pack_name: str) -> None:
@@ -803,8 +801,14 @@ async def _redteam_loop(job_id: str, policy_yaml: str, audits: list[dict]) -> No
         for probe in probes:
             # I3 fix: client-side dedup. Hash the full prompt (not truncated) so two
             # attacks that share a 200-char prefix but differ later aren't conflated.
+            # Phase-12 fix: skip dedup for iteration 1 (demo_sequence) — the demo's
+            # "same payload, re-blocked after patch" beat intentionally fires probe 2
+            # and probe 3 with the SAME prompt. The dedup was added 2026-05-14 to
+            # filter Gemini-emitted repeats from generate_batch, which only runs in
+            # iteration 2+. Restricting the check to iter>=2 preserves the intent
+            # without breaking the demo's retry verification.
             key = hashlib.sha256(probe.prompt.encode("utf-8")).hexdigest()[:16]
-            if key in attempted_hashes:
+            if iteration > 1 and key in attempted_hashes:
                 log.info("redteam skipping duplicate probe (iter %d, hash %s)", iteration, key)
                 continue
             attempted_hashes.add(key)
