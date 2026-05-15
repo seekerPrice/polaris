@@ -279,6 +279,7 @@ When implementing each component, load the matching reference file:
 - **Do not use multi-modal Gemini features in the Reader.** PDF text extraction first, then text-only Gemini call. Multi-modal is unreliable on long PDFs and burns budget.
 - **Do not build user authentication.** The demo is single-user. Hard-code a demo identity.
 - **Do not build a deployment pipeline.** Local dev only. The demo runs on the dev's laptop.
+- **Every fix commit MUST add or update one entry in `docs/ANTI_PATTERNS.md` BEFORE landing.** The registry is a mechanism, not a reminder — it only grows if this rule is enforced. A "fix" means any commit that resolves a bug, regression, reviewer finding, e2e failure, or symptom Lucas reported. Format and growth instructions live at the bottom of the registry file itself. If the bug is a repeat of an existing AP-NNN, extend that entry's *Detection* or *Prevention* section instead of duplicating.
 
 ---
 
