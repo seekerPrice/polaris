@@ -566,6 +566,18 @@ body::after {
   grid-template-columns: 0.85fr 1.15fr 1fr;
   gap: 14px;
 }
+/* Phase-12 bugfix: pin the grid row to viewport-minus-header so the audit
+   feed scrolls inside its panel instead of growing the page (which dragged
+   cols 1+2 tall via align-items:stretch and left empty space below their
+   natural-sized panels). minmax(0, …) is required so .panel__scroll's
+   min-height: 0 can collapse — without it CSS Grid uses implicit auto-min
+   on the track, overriding the flex child. Only applies above the existing
+   1100px breakpoint where the 3-col layout is active. */
+@media (min-width: 1101px) {
+  .grid {
+    grid-auto-rows: minmax(0, calc(100vh - 320px));
+  }
+}
 
 .panel {
   background: var(--bg-1);
