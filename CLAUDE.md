@@ -208,22 +208,29 @@ Track current phase in this section. Update it as you complete each day.
 - [ ] **Day 6 (May 17) — Polish:** three demo recording takes, pitch deck, README finalized, no new features.
 - [ ] **Day 7 (May 18) — Submit:** submit project to lablab.ai. Polish landing page. Buffer day for one thing breaking.
 
-### Status as of 2026-05-13 (Phase 9 complete)
+### Status as of 2026-05-15 (Phase 12 complete — hackathon win-maximization)
 
-**Hackathon-ready.** Days 1-5 code complete, validated end-to-end live. Phase 8 hardening + Phase 9 model re-architecture done.
+**Hackathon-ready + win-condition features.** Days 1-5 + Phase 8 + Phase 9 + Phase 10 + Phase 11 already shipped. Phase 12 adds 6 features to maximize win probability across all 4 judging axes.
 
-**Live verification (last run):**
-- 25/25 unit tests PASS
-- `scripts/verify_live.sh` — both latency (11.1s, well under 60s hero metric) AND injection block PASS
-- `tests/test_redteam_e2e.py` — closed loop verified (gap → patch → re-block)
-- `tests/test_compliance_pdf.py` — PDF endpoint renders correctly
-- `scripts/bakeoff.py` — 48-run benchmark across 8 model configs picked the winner
+**Phase 12 additions (Day 6 work, ~11 hours actual vs ~13 hours budgeted):**
+- **T1 — Pre-deploy consent gate (SOC 2 CC8.1).** ApprovalGate state machine + `/approve` and `/reject` endpoints + ApprovalGate panel. 3-second auto-approve countdown keeps demo flow tight. policy_deploys table is APPEND-ONLY (chain of custody preserved through reject/re-approve scenarios — reviewer Issue 1 fix).
+- **T2 — Risk-reduction % KPI.** Fills the one bonus-criterion gap ("measurable risk reduction"). Computed (DENY + QUARANTINE) / RESOLVED. HUMAN_REVIEW excluded from denominator. Server reference logic in `polaris/api/kpi.py`, mirrored in `Kpi.tsx` for instant SSE updates.
+- **T3 — Exfiltration counter split.** "Attacks blocked" tile split into "Injections blocked" + "Exfiltration caught" (bonus criterion: "caught exfiltration"). KPI strip now has 6 tiles in auto-fit grid.
+- **T4 — QUARANTINE action + Review Queue.** Closes the 6/6 LT-action coverage gap. Borderline credential-adjacent prompts (contains_credentials + risk_score ≥ 0.65) route to QuarantineQueue panel for operator release/block. quarantine_decisions table append-only with first-decision-wins. record_audit_entry now returns the auto-increment id, threaded onto SSE so the UI can target specific entries.
+- **T5 — Multi-agent observability (partial — divergent verdicts ABORTED).** Behavioral probe at 30 min confirmed LT silently ignores conditions on `agent_id` at evaluation time (it's a request passthrough, not a DPI metadata field — reviewer Issue 2 confirmed). Saved ~5 hours by hitting the abort gate early. What shipped: `polaris/demo_agent/engineering_copilot.py` second agent + Synthesizer emits per-agent declared_intent schemas + color-coded agent badges in AuditRow. Multi-agent through one firewall, but identical policy. Per-agent VERDICTS deferred to v0.2.
+- **T6 — Policy pack registry.** 4 pre-built packs (`policies/builtin/{soc2,hipaa,eu_ai_act,pci_dss}.yaml`) each mapped to specific compliance controls and verified against LT corpus 11/11. PackPicker UI alongside Dropzone. Deploys flow through the SAME consent gate as PDF jobs (identical chain of custody). Demo insurance: if PDF parse fails during recording, packs are the fallback.
+
+**Live verification (last run, 2026-05-15):**
+- 62/62 unit tests PASS (was 25; +37 new across T1-T6)
+- LT corpus 11/11 on all 4 builtin packs
+- `dashboard/` typecheck clean (Next.js 16)
+- Synthesizer e2e on all 3 example docs still validates with the new QUARANTINE rule injected
 
 **Remaining work (Lucas's hands):**
-- Phase 6: record demo (3 takes via `./scripts/run_demo.sh` → drag soc2_excerpt.pdf or click "Load demo SOC 2 PDF" button on dashboard), build pitch deck PDF from `docs/PITCH_DECK.md`, framing intro
-- Phase 7: lablab.ai submission, GitHub push (`gh repo create polaris --public --push`)
+- Day 7 (May 17-18) polish: record demo (3 takes via `./scripts/run_demo.sh`; new beat 4a = consent click, new beat 9a = agent badge swap, fallback intro = pack picker), update pitch deck PDF with Phase 12 features
+- May 18 EOD: lablab.ai submission, GitHub push
 
-**Reproducible run:** `./scripts/run_demo.sh` brings up the full stack (shim :11434 + API :8000 + dashboard :3030). Open `http://localhost:3030`. End-to-end pipeline (upload → Reader → Synthesizer → LT deploy) completes in ~11 seconds.
+**Reproducible run:** `./scripts/run_demo.sh` brings up the full stack (shim :11434 + API :8000 + dashboard :3030). Open `http://localhost:3030`. PDF path = drag soc2_excerpt.pdf OR click "Load demo SOC 2 PDF" → pipeline → ApprovalGate panel (auto-deploys in 3s or click). Pack path = click any of the 4 PackPicker buttons → instant ApprovalGate → deploy.
 
 See `docs/BUILD_PLAYBOOK.md` for the detailed daily playbook with specific tasks and Claude Code prompts.
 
