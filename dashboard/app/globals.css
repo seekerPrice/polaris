@@ -566,16 +566,20 @@ body::after {
   grid-template-columns: 0.85fr 1.15fr 1fr;
   gap: 14px;
 }
-/* Phase-12 bugfix: pin the grid row to viewport-minus-header so the audit
-   feed scrolls inside its panel instead of growing the page (which dragged
-   cols 1+2 tall via align-items:stretch and left empty space below their
-   natural-sized panels). minmax(0, …) is required so .panel__scroll's
-   min-height: 0 can collapse — without it CSS Grid uses implicit auto-min
-   on the track, overriding the flex child. Only applies above the existing
-   1100px breakpoint where the 3-col layout is active. */
+/* Phase-12 bugfix v2 (2026-05-15): cap ONLY the panels that contain a
+   .panel__scroll list (audit feed, red team timeline). The v1 attempt
+   capped the entire grid row, which works for col 3 (lists scroll inside
+   the panel) but CLIPS col 1 — Phase 12 expanded it to 3 panels
+   (Upload+PackPicker+SummaryList, ComplianceReport, QuarantineQueue) and
+   the 507px cap cut off SummaryList + QuarantineQueue. Using :has() so
+   we target only the panels that actually grow with list content. Cols
+   1+2 panels (non-scrolling) grow naturally to fit. */
 @media (min-width: 1101px) {
-  .grid {
-    grid-auto-rows: minmax(0, calc(100vh - 320px));
+  .panel:has(.panel__scroll) {
+    /* ~50vh per panel leaves room for the topbar (60) + hero (100) +
+       KPI strip (80) + panel header (~40) + gaps. With audit + red-team
+       stacked in col 3 they fit a typical 900-1080px viewport. */
+    max-height: calc(50vh - 20px);
   }
 }
 
