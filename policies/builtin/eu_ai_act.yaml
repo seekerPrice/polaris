@@ -63,6 +63,17 @@ ingress_rules:
       - field: risk_score
         match_type: threshold
         value: 0.75
+  - name: eu_ai_act_art14_quarantine_borderline_credential
+    description: "EU AI Act Art. 14 — quarantine borderline credential-adjacent prompts (human oversight)"
+    priority: 993
+    action: QUARANTINE
+    conditions:
+      - field: contains_credentials
+        match_type: boolean
+        value: true
+      - field: risk_score
+        match_type: threshold
+        value: 0.65
   - name: eu_ai_act_gdpr_block_exfiltration
     description: "EU AI Act / GDPR Art. 32 — DENY transmissions to known exfil sites"
     priority: 998

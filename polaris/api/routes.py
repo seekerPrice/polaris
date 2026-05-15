@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Annotated
@@ -88,22 +89,34 @@ _REDEPLOY_LOCK = asyncio.Lock()
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
 # Phase-12 T1: pending consent gates keyed by job_id. POST /approve and /reject
 # look up the gate here and release it. Cleared as soon as the gate resolves.
+#
+# IMPORTANT: SINGLE-WORKER MODE ONLY. Like BUS (polaris/api/state.py), this dict
+# is process-local. A gate inserted by worker A is invisible to worker B
+# receiving /approve. scripts/run_demo.sh and polaris/api/server.py both pin
+# uvicorn to one worker. Do NOT raise --workers without first moving this
+# (and BUS) to redis or a shared store.
 _APPROVAL_GATES: dict[str, ApprovalGate] = {}
 
 
 def _count_rules(yaml_text: str) -> int:
     """Phase-12 T1: rule count surfaced in awaiting_approval event so the operator
-    sees policy depth at a glance ('14 rules ready to deploy')."""
+    sees policy depth at a glance ('14 rules ready to deploy').
+
+    Returns -1 on malformed YAML so the UI can render '?' instead of '0' — at
+    this point the YAML has already passed Synthesizer validation, so a parse
+    failure here is suspicious and worth a log line (reviewer I5)."""
     import yaml
     try:
         data = yaml.safe_load(yaml_text)
-        if not isinstance(data, dict):
-            return 0
-        ingress = data.get("ingress_rules") or []
-        egress = data.get("egress_rules") or []
-        return len(ingress) + len(egress)
-    except Exception:
-        return 0
+    except yaml.YAMLError as exc:
+        log.warning("count_rules: post-validation YAML parse failed: %r", exc)
+        return -1
+    if not isinstance(data, dict):
+        log.warning("count_rules: YAML root is not a mapping (got %s)", type(data).__name__)
+        return -1
+    ingress = data.get("ingress_rules") or []
+    egress = data.get("egress_rules") or []
+    return len(ingress) + len(egress)
 
 
 def _spawn_background(coro, label: str) -> asyncio.Task:
@@ -129,7 +142,7 @@ async def events():
 
 
 @router.post("/api/policies/generate")
-async def generate(bg: BackgroundTasks, file: UploadFile = File(...)):
+async def generate(file: UploadFile = File(...)):
     job_id = uuid.uuid4().hex[:12]
     job_dir = ARTIFACTS / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -139,7 +152,11 @@ async def generate(bg: BackgroundTasks, file: UploadFile = File(...)):
     raw_path = _safe_upload_path(job_dir, file.filename)
     raw_path.write_bytes(await file.read())
     await record_job(DB_PATH, job_id, raw_path.name, status="reading")
-    bg.add_task(_pipeline, job_id, raw_path)
+    # Phase-12 reviewer I1: prefer _spawn_background over FastAPI BackgroundTasks
+    # so the pipeline doesn't hold the request handler open while waiting on the
+    # 3 s consent gate (FastAPI awaits BackgroundTasks before freeing the worker).
+    # Strong-ref pattern in _spawn_background keeps the task alive against asyncio GC.
+    _spawn_background(_pipeline(job_id, raw_path), label=f"pipeline:{job_id}")
     return {"job_id": job_id}
 
 
@@ -207,7 +224,6 @@ class _QuarantineDecisionReq(BaseModel):
 
 @router.post("/api/audit/{entry_id}/release")
 async def release_quarantine(entry_id: int, req: _QuarantineDecisionReq):
-    import time
     if entry_id <= 0:
         raise HTTPException(400, "invalid entry_id")
     inserted = await record_quarantine_decision(
@@ -224,7 +240,6 @@ async def release_quarantine(entry_id: int, req: _QuarantineDecisionReq):
 
 @router.post("/api/audit/{entry_id}/block")
 async def block_quarantine(entry_id: int, req: _QuarantineDecisionReq):
-    import time
     if entry_id <= 0:
         raise HTTPException(400, "invalid entry_id")
     inserted = await record_quarantine_decision(
@@ -255,7 +270,7 @@ async def list_packs():
 
 
 @router.post("/api/policies/packs/{name}/deploy")
-async def deploy_pack(name: str, bg: BackgroundTasks):
+async def deploy_pack(name: str):
     if not _PACK_NAME_RE.match(name):
         raise HTTPException(400, "invalid pack name")
     safe_path = (_BUILTIN_PACKS_DIR / f"{name}.yaml").resolve()
@@ -265,9 +280,11 @@ async def deploy_pack(name: str, bg: BackgroundTasks):
     job_dir = ARTIFACTS / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     pol_path = job_dir / "policy.yaml"
-    pol_path.write_text(safe_path.read_text(encoding="utf-8"))
+    # Explicit encoding on both ends (reviewer M2).
+    pol_path.write_text(safe_path.read_text(encoding="utf-8"), encoding="utf-8")
     await record_job(DB_PATH, job_id, f"pack:{name}", status="validated")
-    bg.add_task(_pack_deploy_pipeline, job_id, pol_path, name)
+    # Reviewer I1 — same rationale as /generate above.
+    _spawn_background(_pack_deploy_pipeline(job_id, pol_path, name), label=f"pack_deploy:{job_id}")
     return {"job_id": job_id, "pack": name}
 
 

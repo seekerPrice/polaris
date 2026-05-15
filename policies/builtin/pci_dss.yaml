@@ -74,6 +74,17 @@ ingress_rules:
       - field: token_count
         match_type: threshold
         value: 2000
+  - name: pci_dss_req8_quarantine_borderline_credential
+    description: "PCI-DSS Req 8.3 — quarantine borderline credential-adjacent prompts for review"
+    priority: 993
+    action: QUARANTINE
+    conditions:
+      - field: contains_credentials
+        match_type: boolean
+        value: true
+      - field: risk_score
+        match_type: threshold
+        value: 0.65
 egress_rules:
   - name: pci_dss_req4_block_egress_chd
     description: "PCI-DSS Req 4 — DENY model outputs to exfil domains"
