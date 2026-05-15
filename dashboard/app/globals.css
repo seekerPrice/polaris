@@ -576,10 +576,15 @@ body::after {
    1+2 panels (non-scrolling) grow naturally to fit. */
 @media (min-width: 1101px) {
   .panel:has(.panel__scroll) {
-    /* ~50vh per panel leaves room for the topbar (60) + hero (100) +
-       KPI strip (80) + panel header (~40) + gaps. With audit + red-team
-       stacked in col 3 they fit a typical 900-1080px viewport. */
-    max-height: calc(50vh - 20px);
+    /* v3 (2026-05-15): drop the cap entirely. CSS Grid auto-stretches col 3
+       to row height (= col 1's natural content = ~1200px with ApprovalGate
+       + ComplianceReport + QuarantineQueue). Inside col 3, the inline
+       flex:1.1 + flex:1 on the audit/red-team panels distribute that
+       stretched height. .panel__scroll's flex:1 + min-height:0 + overflow:
+       auto chain handles internal scroll for unbounded lists. The v2 cap
+       (calc(50vh-20px) ≈ 393px) was forcing col 3 panels to 800px total
+       while col 1 stretched to 1200px — empty space below red-team timeline. */
+    max-height: none;
   }
 }
 
