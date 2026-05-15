@@ -505,10 +505,14 @@ body::after {
    ============================================================ */
 .kpis {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* Phase-12 T2+T3: 6 tiles now (added Risk reduction, split Attacks into
+     Injections/Exfiltration). auto-fit + minmax keeps tile widths readable
+     on narrower viewports without a hard breakpoint. */
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 12px;
   margin-bottom: 14px;
 }
+.kpi--violet .kpi__bar { background: var(--violet); box-shadow: 0 0 8px var(--violet); }
 .kpi {
   background: var(--bg-1);
   border: 1px solid var(--border-0);
