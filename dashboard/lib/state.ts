@@ -44,6 +44,11 @@ export type State = {
   // Phase-12 T1: SOC 2 CC8.1 pre-deploy consent gate. Non-null only between
   // awaiting_approval and policy_approved/policy_rejected.
   approval: ApprovalGateState | null;
+  // Phase-12 T4: operator decisions on QUARANTINE'd entries. Maps audit
+  // entry_id -> the decision ("RELEASE" or "BLOCK"). QuarantineQueue filters
+  // out entries that already have a decision; the underlying audit row stays
+  // visible in the Live Traffic feed (just without an action button).
+  quarantineDecisions: Record<number, "RELEASE" | "BLOCK">;
 };
 
 // ---- actions ----
@@ -79,6 +84,7 @@ export const INIT_STATE: State = {
   beat: 0,
   showComplianceReport: false,
   approval: null,
+  quarantineDecisions: {},
 };
 
 // ---- reducer ----
@@ -170,6 +176,11 @@ export function reducer(s: State, ev: Action): State {
             reason: ev.reason,
           },
         },
+      };
+    case "quarantine_decision":
+      return {
+        ...s,
+        quarantineDecisions: { ...s.quarantineDecisions, [ev.entry_id]: ev.decision },
       };
     case "redteam_aborted": {
       const v: ProbeView = { phase: "result", attack_category: `aborted: ${ev.reason}` };

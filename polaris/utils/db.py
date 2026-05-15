@@ -87,6 +87,18 @@ CREATE TABLE IF NOT EXISTS policy_deploys (
   deployed_at REAL                      -- non-null only on approved
 );
 CREATE INDEX IF NOT EXISTS idx_policy_deploys_job ON policy_deploys(job_id, decided_at);
+-- Phase-12 T4: QUARANTINE Review Queue decisions. Like policy_deploys, this is
+-- APPEND-ONLY so the chain of custody preserves history. UNIQUE on the audit
+-- entry_id is intentional — a single LT request gets quarantined once, and
+-- the first operator decision wins (subsequent UI clicks are no-ops).
+CREATE TABLE IF NOT EXISTS quarantine_decisions (
+  decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  audit_entry_id INTEGER NOT NULL,
+  decision TEXT NOT NULL,         -- 'RELEASE' or 'BLOCK'
+  approver TEXT NOT NULL,
+  decided_at REAL NOT NULL,
+  UNIQUE (audit_entry_id)
+);
 """
 
 
@@ -135,15 +147,21 @@ async def update_job(path: Path, job_id: str, **fields: Any) -> None:
         await db.commit()
 
 
-async def record_audit_entry(path: Path, job_id: str | None, raw: dict) -> None:
-    # L31 fix (deep-check 2026-05-13): `default=str` so a stray Path / datetime / set in
-    # the raw payload doesn't crash the insert. Falls back to repr-ish string.
+async def record_audit_entry(path: Path, job_id: str | None, raw: dict) -> int:
+    """Insert one audit row, return its auto-increment id. Phase-12 T4: id is
+    threaded through to the SSE payload so the QUARANTINE Review Queue can
+    identify which entry an operator's release/block decision targets.
+
+    L31 fix (deep-check 2026-05-13): `default=str` so a stray Path / datetime / set
+    in the raw payload doesn't crash the insert."""
     async with _connect(path) as db:
-        await db.execute(
+        cur = await db.execute(
             "INSERT INTO audit_entries(job_id, ts, verdict, matched_rule, raw_json) VALUES (?,?,?,?,?)",
             (job_id, raw.get("timestamp", ""), raw.get("verdict"), raw.get("matched_rule"), json.dumps(raw, default=str)),
         )
+        entry_id = cur.lastrowid
         await db.commit()
+    return entry_id or 0
 
 
 async def record_policy_deploy(
@@ -201,21 +219,67 @@ async def fetch_policy_deploys(path: Path, job_id: str | None = None, limit: int
     ]
 
 
+async def record_quarantine_decision(
+    path: Path,
+    audit_entry_id: int,
+    decision: str,
+    approver: str,
+    decided_at: float,
+) -> bool:
+    """Phase-12 T4: record operator's RELEASE/BLOCK decision for a QUARANTINE'd
+    audit entry. Returns True if inserted, False if a prior decision already
+    exists (UNIQUE constraint — first decision wins)."""
+    if decision not in ("RELEASE", "BLOCK"):
+        raise ValueError(f"decision must be RELEASE or BLOCK, got {decision!r}")
+    async with _connect(path) as db:
+        try:
+            await db.execute(
+                "INSERT INTO quarantine_decisions "
+                "(audit_entry_id, decision, approver, decided_at) VALUES (?,?,?,?)",
+                (audit_entry_id, decision, approver, decided_at),
+            )
+            await db.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+
+async def fetch_quarantine_decisions(path: Path, limit: int = 200) -> list[dict]:
+    async with _connect(path) as db:
+        async with db.execute(
+            "SELECT decision_id, audit_entry_id, decision, approver, decided_at "
+            "FROM quarantine_decisions ORDER BY decided_at DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [
+        {
+            "decision_id": r[0],
+            "audit_entry_id": r[1],
+            "decision": r[2],
+            "approver": r[3],
+            "decided_at": r[4],
+        }
+        for r in rows
+    ]
+
+
 async def fetch_audit_entries(path: Path, limit: int = 100, offset: int = 0) -> list[dict]:
     async with _connect(path) as db:
         async with db.execute(
-            "SELECT job_id, ts, verdict, matched_rule, raw_json FROM audit_entries "
+            "SELECT id, job_id, ts, verdict, matched_rule, raw_json FROM audit_entries "
             "ORDER BY id DESC LIMIT ? OFFSET ?",
             (limit, offset),
         ) as cur:
             rows = await cur.fetchall()
     return [
         {
-            "job_id": r[0],
-            "ts": r[1],
-            "verdict": r[2],
-            "matched_rule": r[3],
-            "raw": json.loads(r[4]),
+            "entry_id": r[0],
+            "job_id": r[1],
+            "ts": r[2],
+            "verdict": r[3],
+            "matched_rule": r[4],
+            "raw": json.loads(r[5]),
         }
         for r in rows
     ]

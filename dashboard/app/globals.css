@@ -1097,6 +1097,35 @@ body::after {
 }
 
 /* ============================================================
+   Phase-12 T4 — QUARANTINE Review Queue
+   ============================================================ */
+.audit-row--quarantine {
+  border-left-color: var(--amber);
+  box-shadow: inset 0 0 0 1px oklch(0.5 0.18 65 / 0.15);
+}
+.quarantine-row {
+  background: var(--bg-2);
+  border: 1px solid var(--border-0);
+  border-left: 3px solid var(--amber);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.quarantine-row__head {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+}
+.quarantine-row__detail {
+  display: flex; gap: 12px; flex-wrap: wrap;
+  font-size: 11px; color: var(--text-2); margin-bottom: 10px;
+}
+.quarantine-row__detail code { color: var(--text-1); }
+.quarantine-row__actions {
+  display: flex; gap: 8px;
+}
+
+/* ============================================================
    utility
    ============================================================ */
 .stack { display: flex; flex-direction: column; gap: 10px; }

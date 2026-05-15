@@ -9,7 +9,15 @@
 // component. The four useEffect blocks handle: SSE subscription, chime audio,
 // YAML streaming animation, and the Cmd+Shift+P stage-day fallback.
 import { useCallback, useEffect, useReducer, useRef } from "react";
-import { API_BASE, uploadPolicy, startRedTeam, approvePolicy, rejectPolicy } from "@/lib/api";
+import {
+  API_BASE,
+  approvePolicy,
+  blockQuarantine,
+  rejectPolicy,
+  releaseQuarantine,
+  startRedTeam,
+  uploadPolicy,
+} from "@/lib/api";
 import { reducer, INIT_STATE } from "@/lib/state";
 import { startReplay, type ReplayHandle } from "@/lib/replay";
 import { Topbar } from "@/components/polaris/Topbar";
@@ -21,6 +29,7 @@ import { Dropzone } from "@/components/polaris/Dropzone";
 import { SummaryList } from "@/components/polaris/SummaryList";
 import { ComplianceReport } from "@/components/polaris/ComplianceReport";
 import { ApprovalGate } from "@/components/polaris/ApprovalGate";
+import { QuarantineQueue } from "@/components/polaris/QuarantineQueue";
 import { YamlEditor } from "@/components/polaris/YamlEditor";
 import { AuditRow } from "@/components/polaris/AuditRow";
 import { ProbeRow } from "@/components/polaris/ProbeRow";
@@ -326,6 +335,21 @@ export default function Page() {
           />
 
           <ComplianceReport show={state.showComplianceReport} />
+
+          <QuarantineQueue
+            audits={state.audits}
+            decisions={state.quarantineDecisions}
+            onRelease={(entryId) => {
+              void releaseQuarantine(entryId).catch((err) => {
+                dispatch({ type: "client_error", error: `Release failed: ${err}` });
+              });
+            }}
+            onBlock={(entryId) => {
+              void blockQuarantine(entryId).catch((err) => {
+                dispatch({ type: "client_error", error: `Block failed: ${err}` });
+              });
+            }}
+          />
         </div>
 
         {/* col 2 — YAML stream */}

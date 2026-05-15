@@ -52,6 +52,31 @@ export async function rejectPolicy(
   }
 }
 
+// Phase-12 T4 — QUARANTINE Review Queue actions.
+export async function releaseQuarantine(entryId: number, approver = "operator@polaris.demo"): Promise<void> {
+  const r = await fetch(`${API_BASE}/api/audit/${entryId}/release`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ approver }),
+  });
+  if (!r.ok && r.status !== 409) {
+    const body = await r.text().catch(() => "");
+    throw new Error(`release failed (${r.status}): ${body.slice(0, 200) || r.statusText}`);
+  }
+}
+
+export async function blockQuarantine(entryId: number, approver = "operator@polaris.demo"): Promise<void> {
+  const r = await fetch(`${API_BASE}/api/audit/${entryId}/block`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ approver }),
+  });
+  if (!r.ok && r.status !== 409) {
+    const body = await r.text().catch(() => "");
+    throw new Error(`block failed (${r.status}): ${body.slice(0, 200) || r.statusText}`);
+  }
+}
+
 export type PolarisEvent =
   | { type: "reader_progress"; job_id: string; status: string; n_requirements?: number }
   | { type: "synthesizer_progress"; job_id: string; status: string; passed?: boolean; summary?: string }
@@ -73,9 +98,16 @@ export type PolarisEvent =
   // Phase-12 T1: SOC 2 CC8.1 consent gate events.
   | { type: "awaiting_approval"; job_id: string; policy_sha: string; n_requirements: number; n_rules: number; auto_approve_after_s: number }
   | { type: "policy_approved"; job_id: string; policy_sha: string; approver: string; decided_at: number }
-  | { type: "policy_rejected"; job_id: string; policy_sha: string; approver: string; reason?: string };
+  | { type: "policy_rejected"; job_id: string; policy_sha: string; approver: string; reason?: string }
+  // Phase-12 T4: QUARANTINE Review Queue decisions.
+  | { type: "quarantine_decision"; entry_id: number; decision: "RELEASE" | "BLOCK"; approver: string };
 
 export type AuditEntry = {
+  // Phase-12 T4: entry_id is the audit_entries.id auto-increment column, stamped
+  // by _pump_audit_log onto the SSE payload so the QUARANTINE Review Queue can
+  // identify which row an operator release/block decision targets. Optional
+  // because replay-engine fixtures (lib/replay.ts) emit entries without ids.
+  entry_id?: number;
   timestamp?: string;
   verdict?: string;
   matched_rule?: string;

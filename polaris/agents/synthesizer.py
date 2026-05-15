@@ -188,6 +188,22 @@ class Synthesizer:
             "deny_message": "[POLARIS-SUPP] Blocked: prompt targets requestbin (exfiltration vector).",
             "conditions": [{"field": "target_domains", "match_type": "contains", "value": "requestbin"}],
         },
+        # Phase-12 T4 — QUARANTINE action closes the 6/6 LT-action coverage gap.
+        # Borderline credential-adjacent prompts (mentions credentials AND elevated
+        # risk_score) route to the dashboard Quarantine Queue for operator review
+        # instead of an outright DENY. Threshold 0.65 keeps the LT-corpus benign
+        # prompts (typical risk <0.5) out of the queue. Raise to 0.75 if any
+        # corpus row trips this rule.
+        {
+            "name": "polaris_baseline_quarantine_borderline_credential",
+            "description": "Quarantine borderline credential-adjacent prompts for operator review",
+            "priority": 993,
+            "action": "QUARANTINE",
+            "conditions": [
+                {"field": "contains_credentials", "match_type": "boolean", "value": True},
+                {"field": "risk_score", "match_type": "threshold", "value": 0.65},
+            ],
+        },
     ]
 
     # Phase-10 Rule C — paste-site egress block (mirrors ingress paste-site rules on the

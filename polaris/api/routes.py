@@ -62,6 +62,7 @@ from polaris.utils.db import (
     record_audit_entry,
     record_job,
     record_policy_deploy,
+    record_quarantine_decision,
     update_job,
 )
 from polaris.utils.pdf_extractor import extract_text
@@ -190,6 +191,46 @@ async def reject_policy(job_id: str, req: _RejectionReq):
         raise HTTPException(409, f"already {gate.state.value}")
     gate.reject(req.approver, req.reason)
     return {"rejected": True, "reason": req.reason}
+
+
+# Phase-12 T4: QUARANTINE Review Queue actions. Body is intentionally tiny — the
+# operator identity is hardcoded for the demo (no auth in scope).
+class _QuarantineDecisionReq(BaseModel):
+    approver: str = "operator@polaris.demo"
+
+
+@router.post("/api/audit/{entry_id}/release")
+async def release_quarantine(entry_id: int, req: _QuarantineDecisionReq):
+    import time
+    if entry_id <= 0:
+        raise HTTPException(400, "invalid entry_id")
+    inserted = await record_quarantine_decision(
+        DB_PATH, entry_id, "RELEASE", req.approver, time.time(),
+    )
+    if not inserted:
+        raise HTTPException(409, "already decided")
+    await BUS.publish({
+        "type": "quarantine_decision",
+        "entry_id": entry_id, "decision": "RELEASE", "approver": req.approver,
+    })
+    return {"released": True}
+
+
+@router.post("/api/audit/{entry_id}/block")
+async def block_quarantine(entry_id: int, req: _QuarantineDecisionReq):
+    import time
+    if entry_id <= 0:
+        raise HTTPException(400, "invalid entry_id")
+    inserted = await record_quarantine_decision(
+        DB_PATH, entry_id, "BLOCK", req.approver, time.time(),
+    )
+    if not inserted:
+        raise HTTPException(409, "already decided")
+    await BUS.publish({
+        "type": "quarantine_decision",
+        "entry_id": entry_id, "decision": "BLOCK", "approver": req.approver,
+    })
+    return {"blocked": True}
 
 
 @router.get("/api/audit-log")
@@ -548,7 +589,12 @@ async def _pump_audit_log(job_id: str, generation: int) -> None:
                 polaris_computed = _compute_mismatches(raw)
                 if polaris_computed:
                     raw["mismatches"] = polaris_computed
-            await record_audit_entry(DB_PATH, job_id, raw)
+            entry_id = await record_audit_entry(DB_PATH, job_id, raw)
+            # Phase-12 T4: thread the auto-increment id onto the SSE payload so
+            # the Quarantine Queue UI can identify which row an operator
+            # release/block targets. Stamped after persistence so client and DB
+            # agree on the id.
+            raw["entry_id"] = entry_id
             await BUS.publish({"type": "audit_log_entry", "job_id": job_id, "entry": raw})
         except Exception as exc:
             # Phase-11 deep-review C1 (api): one bad line must not kill the pump.

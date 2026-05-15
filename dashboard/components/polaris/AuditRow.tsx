@@ -16,14 +16,30 @@ function fmtTime(ts?: string): string {
 }
 
 export function AuditRow({ entry }: { entry: AuditEntry }) {
-  const deny = entry.verdict === "DENY";
-  const cls = "audit-row " + (deny ? "audit-row--deny" : "audit-row--allow");
+  // Phase-12 T4: QUARANTINE is a third verdict state, styled amber to sit
+  // between green ALLOW and red DENY. Audit row tells you SOMETHING happened;
+  // the QuarantineQueue panel offers the resolution action.
+  const verdict = entry.verdict;
+  const cls =
+    "audit-row " +
+    (verdict === "DENY"
+      ? "audit-row--deny"
+      : verdict === "QUARANTINE"
+      ? "audit-row--quarantine"
+      : "audit-row--allow");
+  const pillCls =
+    "pill " +
+    (verdict === "DENY"
+      ? "pill--rose"
+      : verdict === "QUARANTINE"
+      ? "pill--amber"
+      : "pill--emerald");
   return (
     <div className={cls}>
       <div className="audit-row__head">
-        <span className={"pill " + (deny ? "pill--rose" : "pill--emerald")}>
+        <span className={pillCls}>
           <span className="pill__dot" />
-          {entry.verdict || "—"}
+          {verdict || "—"}
         </span>
         <span className="audit-row__rule">{entry.matched_rule || "—"}</span>
         <span className="ts">{fmtTime(entry.timestamp)}</span>
