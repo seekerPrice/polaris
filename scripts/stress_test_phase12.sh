@@ -121,15 +121,24 @@ STATUS=$(curl -sS -o /dev/null -w "%{http_code}" -X POST "$API/api/audit/0/relea
 ENTRIES=$(curl -sS "$API/api/audit-log?limit=5" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(len(d) if isinstance(d,list) else 0)')
 echo "  audit entries available: $ENTRIES"
 if [[ "$ENTRIES" -gt 0 ]]; then
+    # Idempotent: re-runs of this script may leave prior decisions on existing
+    # entries. Pick the LATEST audit entry; first-release returns 200 (clean
+    # DB) or 409 (prior decision). Either way, contract holds. The follow-up
+    # release MUST return 409 — that proves first-decision-wins regardless of
+    # which call originally won.
     EID=$(curl -sS "$API/api/audit-log?limit=1" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d[0].get("entry_id",-1))')
     if [[ "$EID" -gt 0 ]]; then
         STATUS=$(curl -sS -o /dev/null -w "%{http_code}" -X POST "$API/api/audit/$EID/release" \
             -H "Content-Type: application/json" -d '{}')
-        [[ "$STATUS" == "200" ]] && pass "first release on entry $EID works" || fail "expected 200, got $STATUS"
-        # Second release should 409 (first-decision-wins).
+        if [[ "$STATUS" == "200" || "$STATUS" == "409" ]]; then
+            pass "release on entry $EID returned $STATUS (200=clean DB, 409=prior run)"
+        else
+            fail "expected 200 or 409 on first release, got $STATUS"
+        fi
+        # Follow-up MUST 409 — a decision now exists whether from this call or a prior run.
         STATUS=$(curl -sS -o /dev/null -w "%{http_code}" -X POST "$API/api/audit/$EID/release" \
             -H "Content-Type: application/json" -d '{}')
-        [[ "$STATUS" == "409" ]] && pass "double-release returns 409 (first-decision-wins)" || fail "expected 409, got $STATUS"
+        [[ "$STATUS" == "409" ]] && pass "follow-up release returns 409 (first-decision-wins)" || fail "expected 409, got $STATUS"
     fi
 fi
 
