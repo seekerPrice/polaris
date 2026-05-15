@@ -72,6 +72,21 @@ CREATE TABLE IF NOT EXISTS gaps (
 CREATE INDEX IF NOT EXISTS idx_audit_job ON audit_entries(job_id);
 -- L32 fix (deep-check 2026-05-13): gap queries filter by job_id; add the index.
 CREATE INDEX IF NOT EXISTS idx_gaps_job ON gaps(job_id);
+-- Phase-12 T1: SOC 2 CC8.1 chain of custody. APPEND-ONLY — each approve/reject
+-- is its own row. Critical-reviewer 2026-05-15 Issue 1: prior draft used
+-- INSERT OR REPLACE + UNIQUE(job_id, policy_sha) which silently overwrote
+-- rejections, breaking the regulator-readable audit chain.
+CREATE TABLE IF NOT EXISTS policy_deploys (
+  deploy_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id TEXT NOT NULL,
+  policy_sha TEXT NOT NULL,
+  approver TEXT NOT NULL,
+  approved INTEGER NOT NULL,           -- 1=approved, 0=rejected
+  reason TEXT,                          -- non-null only on rejection
+  decided_at REAL NOT NULL,
+  deployed_at REAL                      -- non-null only on approved
+);
+CREATE INDEX IF NOT EXISTS idx_policy_deploys_job ON policy_deploys(job_id, decided_at);
 """
 
 
@@ -129,6 +144,61 @@ async def record_audit_entry(path: Path, job_id: str | None, raw: dict) -> None:
             (job_id, raw.get("timestamp", ""), raw.get("verdict"), raw.get("matched_rule"), json.dumps(raw, default=str)),
         )
         await db.commit()
+
+
+async def record_policy_deploy(
+    path: Path,
+    job_id: str,
+    policy_sha: str,
+    approver: str,
+    approved: bool,
+    decided_at: float,
+    deployed_at: float | None,
+    reason: str | None,
+) -> None:
+    """Append-only. Each approval/rejection is its own row in the chain of custody."""
+    async with _connect(path) as db:
+        await db.execute(
+            "INSERT INTO policy_deploys "
+            "(job_id, policy_sha, approver, approved, reason, decided_at, deployed_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (job_id, policy_sha, approver, int(approved), reason, decided_at, deployed_at),
+        )
+        await db.commit()
+
+
+async def fetch_policy_deploys(path: Path, job_id: str | None = None, limit: int = 100) -> list[dict]:
+    """Read the chain of custody. Filter by job_id when set; else most-recent first."""
+    async with _connect(path) as db:
+        if job_id is not None:
+            sql = (
+                "SELECT deploy_id, job_id, policy_sha, approver, approved, reason, "
+                "decided_at, deployed_at FROM policy_deploys "
+                "WHERE job_id = ? ORDER BY decided_at DESC LIMIT ?"
+            )
+            args = (job_id, limit)
+        else:
+            sql = (
+                "SELECT deploy_id, job_id, policy_sha, approver, approved, reason, "
+                "decided_at, deployed_at FROM policy_deploys "
+                "ORDER BY decided_at DESC LIMIT ?"
+            )
+            args = (limit,)
+        async with db.execute(sql, args) as cur:
+            rows = await cur.fetchall()
+    return [
+        {
+            "deploy_id": r[0],
+            "job_id": r[1],
+            "policy_sha": r[2],
+            "approver": r[3],
+            "approved": bool(r[4]),
+            "reason": r[5],
+            "decided_at": r[6],
+            "deployed_at": r[7],
+        }
+        for r in rows
+    ]
 
 
 async def fetch_audit_entries(path: Path, limit: int = 100, offset: int = 0) -> list[dict]:

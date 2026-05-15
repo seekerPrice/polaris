@@ -23,6 +23,35 @@ export async function startRedTeam(jobId: string): Promise<void> {
   }
 }
 
+// Phase-12 T1 — pre-deploy consent endpoints (SOC 2 CC8.1).
+export async function approvePolicy(jobId: string, approver = "operator@polaris.demo"): Promise<void> {
+  const r = await fetch(`${API_BASE}/api/policies/${jobId}/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ approver }),
+  });
+  if (!r.ok) {
+    const body = await r.text().catch(() => "");
+    throw new Error(`approve failed (${r.status}): ${body.slice(0, 200) || r.statusText}`);
+  }
+}
+
+export async function rejectPolicy(
+  jobId: string,
+  reason: string,
+  approver = "operator@polaris.demo",
+): Promise<void> {
+  const r = await fetch(`${API_BASE}/api/policies/${jobId}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ approver, reason }),
+  });
+  if (!r.ok) {
+    const body = await r.text().catch(() => "");
+    throw new Error(`reject failed (${r.status}): ${body.slice(0, 200) || r.statusText}`);
+  }
+}
+
 export type PolarisEvent =
   | { type: "reader_progress"; job_id: string; status: string; n_requirements?: number }
   | { type: "synthesizer_progress"; job_id: string; status: string; passed?: boolean; summary?: string }
@@ -40,7 +69,11 @@ export type PolarisEvent =
   | { type: "redteam_iteration_started"; job_id: string; iteration: number; n_probes: number; source: "demo_sequence" | "generate_batch" }
   | { type: "redteam_iteration_summary"; job_id: string; iteration: number; n_probes: number; n_gaps: number; n_blocked: number; cumulative_probes: number; cumulative_blocked: number; cumulative_gaps_closed: number; coverage_pct: number }
   | { type: "redteam_iteration_failed"; job_id: string; iteration: number; reason: string }
-  | { type: "redteam_loop_complete"; job_id: string; reason: "saturated" | "max_iterations"; iterations: number; coverage_pct: number; cumulative_probes: number; cumulative_blocked: number; cumulative_gaps_closed: number };
+  | { type: "redteam_loop_complete"; job_id: string; reason: "saturated" | "max_iterations"; iterations: number; coverage_pct: number; cumulative_probes: number; cumulative_blocked: number; cumulative_gaps_closed: number }
+  // Phase-12 T1: SOC 2 CC8.1 consent gate events.
+  | { type: "awaiting_approval"; job_id: string; policy_sha: string; n_requirements: number; n_rules: number; auto_approve_after_s: number }
+  | { type: "policy_approved"; job_id: string; policy_sha: string; approver: string; decided_at: number }
+  | { type: "policy_rejected"; job_id: string; policy_sha: string; approver: string; reason?: string };
 
 export type AuditEntry = {
   timestamp?: string;

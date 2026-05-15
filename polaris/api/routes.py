@@ -47,10 +47,13 @@ _DEFAULT_BASELINE_POLICY = Path(__file__).resolve().parents[2] / "policies" / "d
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
+from pydantic import BaseModel
+
 from polaris.agents.auditor import render_compliance_report
 from polaris.agents.reader import PolicyTree, Reader
 from polaris.agents.redteam import RedTeam
 from polaris.agents.synthesizer import Synthesizer, SynthesizerGateError
+from polaris.api.approval import ApprovalGate, ApprovalState
 from polaris.api.state import BUS
 from polaris.api.sse import sse_response
 from polaris.lobster.client import LobsterTrap
@@ -58,6 +61,7 @@ from polaris.utils.db import (
     fetch_audit_entries,
     record_audit_entry,
     record_job,
+    record_policy_deploy,
     update_job,
 )
 from polaris.utils.pdf_extractor import extract_text
@@ -75,6 +79,24 @@ _REDEPLOY_LOCK = asyncio.Lock()
 # Phase-11 deep-review C2 (api): keep strong references to fire-and-forget tasks
 # (red team loops, regen pipelines) so asyncio doesn't GC them mid-execution.
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
+# Phase-12 T1: pending consent gates keyed by job_id. POST /approve and /reject
+# look up the gate here and release it. Cleared as soon as the gate resolves.
+_APPROVAL_GATES: dict[str, ApprovalGate] = {}
+
+
+def _count_rules(yaml_text: str) -> int:
+    """Phase-12 T1: rule count surfaced in awaiting_approval event so the operator
+    sees policy depth at a glance ('14 rules ready to deploy')."""
+    import yaml
+    try:
+        data = yaml.safe_load(yaml_text)
+        if not isinstance(data, dict):
+            return 0
+        ingress = data.get("ingress_rules") or []
+        egress = data.get("egress_rules") or []
+        return len(ingress) + len(egress)
+    except Exception:
+        return 0
 
 
 def _spawn_background(coro, label: str) -> asyncio.Task:
@@ -134,6 +156,40 @@ async def deploy(job_id: str):
         raise HTTPException(404, "policy.yaml not generated yet")
     gen = await _redeploy(job_id, pol)
     return {"deployed": True, "generation": gen}
+
+
+# Phase-12 T1: pre-deploy consent endpoints (SOC 2 CC8.1 change management).
+class _ApprovalReq(BaseModel):
+    approver: str = "operator@polaris.demo"
+
+
+class _RejectionReq(BaseModel):
+    approver: str = "operator@polaris.demo"
+    reason: str = "manual reject"
+
+
+@router.post("/api/policies/{job_id}/approve")
+async def approve_policy(job_id: str, req: _ApprovalReq):
+    _validate_job_id(job_id)
+    gate = _APPROVAL_GATES.get(job_id)
+    if gate is None:
+        raise HTTPException(404, "no pending approval for this job")
+    if gate.state is not ApprovalState.AWAITING:
+        raise HTTPException(409, f"already {gate.state.value}")
+    gate.approve(req.approver)
+    return {"approved": True, "approver": req.approver}
+
+
+@router.post("/api/policies/{job_id}/reject")
+async def reject_policy(job_id: str, req: _RejectionReq):
+    _validate_job_id(job_id)
+    gate = _APPROVAL_GATES.get(job_id)
+    if gate is None:
+        raise HTTPException(404, "no pending approval for this job")
+    if gate.state is not ApprovalState.AWAITING:
+        raise HTTPException(409, f"already {gate.state.value}")
+    gate.reject(req.approver, req.reason)
+    return {"rejected": True, "reason": req.reason}
 
 
 @router.get("/api/audit-log")
@@ -309,7 +365,54 @@ async def _pipeline_inner(job_id: str, file_path: Path, stage: list[str]) -> Non
         # dashboard's "audit-defensible" claim only renders when the proxy is actually live.
         policy_sha = hashlib.sha256(syn.output.yaml_text.encode("utf-8")).hexdigest()[:12]
         await update_job(DB_PATH, job_id, policy_sha256=policy_sha)
+
+        # Phase-12 T1: SOC 2 CC8.1 consent gate. Pipeline pauses here until the
+        # operator clicks Approve/Reject OR the 3s auto-approve timer fires
+        # (demo-mode safety). Chain of custody (approver + decided_at + SHA-256)
+        # appended to policy_deploys for regulator-readable audit trail.
+        gate = ApprovalGate(job_id, policy_sha, auto_approve_after=3.0)
+        _APPROVAL_GATES[job_id] = gate
+        await BUS.publish({
+            "type": "awaiting_approval",
+            "job_id": job_id,
+            "policy_sha": policy_sha,
+            "n_requirements": len(tree.requirements),
+            "n_rules": _count_rules(syn.output.yaml_text),
+            "auto_approve_after_s": 3.0,
+        })
+        try:
+            decision = await gate.wait_for_decision()
+        finally:
+            _APPROVAL_GATES.pop(job_id, None)
+
+        await record_policy_deploy(
+            DB_PATH, job_id, policy_sha,
+            approver=decision.approver,
+            approved=decision.approved,
+            decided_at=decision.decided_at,
+            deployed_at=decision.decided_at if decision.approved else None,
+            reason=decision.reason,
+        )
+
+        if not decision.approved:
+            await BUS.publish({
+                "type": "policy_rejected",
+                "job_id": job_id,
+                "policy_sha": policy_sha,
+                "approver": decision.approver,
+                "reason": decision.reason,
+            })
+            await update_job(DB_PATH, job_id, status="rejected")
+            return
+
         await _redeploy(job_id, job_dir / "policy.yaml")
+        await BUS.publish({
+            "type": "policy_approved",
+            "job_id": job_id,
+            "policy_sha": policy_sha,
+            "approver": decision.approver,
+            "decided_at": decision.decided_at,
+        })
         await BUS.publish({"type": "policy_hash", "job_id": job_id, "sha256": policy_sha})
     else:
         # Phase-11 T1.B3: Synth validation failed. Deploy the default baseline so the

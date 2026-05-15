@@ -9,6 +9,7 @@
 // type from the server requires adding a case here; removing a state field
 // requires confirming no SSE consumer relies on it.
 import type { AuditEntry, ProbeShape, PolarisEvent } from "./api";
+import type { ApprovalGateState } from "@/components/polaris/ApprovalGate";
 
 // ---- view-only types (presentation-derived, not transported over SSE) ----
 export type ProbeView = {
@@ -40,6 +41,9 @@ export type State = {
   // backend traffic ignores them).
   beat: number;
   showComplianceReport: boolean;
+  // Phase-12 T1: SOC 2 CC8.1 pre-deploy consent gate. Non-null only between
+  // awaiting_approval and policy_approved/policy_rejected.
+  approval: ApprovalGateState | null;
 };
 
 // ---- actions ----
@@ -74,6 +78,7 @@ export const INIT_STATE: State = {
   isDragging: false,
   beat: 0,
   showComplianceReport: false,
+  approval: null,
 };
 
 // ---- reducer ----
@@ -130,6 +135,42 @@ export function reducer(s: State, ev: Action): State {
       return { ...s, synth: { ...s.synth, yaml: "" } };
     case "policy_hash":
       return { ...s, policyHash: ev.sha256 };
+    case "awaiting_approval":
+      return {
+        ...s,
+        approval: {
+          jobId: ev.job_id,
+          policySha: ev.policy_sha,
+          nRequirements: ev.n_requirements,
+          nRules: ev.n_rules,
+          autoApproveAfterS: ev.auto_approve_after_s,
+          startedAt: Date.now(),
+          decision: null,
+        },
+      };
+    case "policy_approved":
+      if (!s.approval || s.approval.jobId !== ev.job_id) return s;
+      return {
+        ...s,
+        approval: {
+          ...s.approval,
+          decision: { approved: true, approver: ev.approver, decidedAt: ev.decided_at },
+        },
+      };
+    case "policy_rejected":
+      if (!s.approval || s.approval.jobId !== ev.job_id) return s;
+      return {
+        ...s,
+        approval: {
+          ...s.approval,
+          decision: {
+            approved: false,
+            approver: ev.approver,
+            decidedAt: Date.now() / 1000,
+            reason: ev.reason,
+          },
+        },
+      };
     case "redteam_aborted": {
       const v: ProbeView = { phase: "result", attack_category: `aborted: ${ev.reason}` };
       return { ...s, probes: [v, ...s.probes].slice(0, 50) };

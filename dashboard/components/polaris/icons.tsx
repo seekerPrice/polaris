@@ -101,6 +101,35 @@ const Inbox = (p: IconProps) => (
   </svg>
 );
 
+// Phase-12 T1+T4 additions.
+const Check = (p: IconProps) => (
+  <svg viewBox="0 0 24 24" {...base} strokeWidth={2} {...p}>
+    <polyline points="20 6 9 17 4 12" />
+  </svg>
+);
+
+const X = (p: IconProps) => (
+  <svg viewBox="0 0 24 24" {...base} strokeWidth={2} {...p}>
+    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+  </svg>
+);
+
+const ShieldCheck = (p: IconProps) => (
+  <svg viewBox="0 0 24 24" {...base} {...p}>
+    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    <polyline points="9 12 11 14 15 10" />
+  </svg>
+);
+
+const Layers = (p: IconProps) => (
+  <svg viewBox="0 0 24 24" {...base} {...p}>
+    <polygon points="12 2 2 7 12 12 22 7 12 2" />
+    <polyline points="2 17 12 22 22 17" />
+    <polyline points="2 12 12 17 22 12" />
+  </svg>
+);
+
 export const I = {
   Compass, Upload, Activity, Bug, FileCheck, Shield, Brain, Cpu, Crosshair, Play, Restart, Alert, Inbox,
+  Check, X, ShieldCheck, Layers,
 };
