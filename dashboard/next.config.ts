@@ -14,6 +14,17 @@ const nextConfig: NextConfig = {
   // Hosted: NEXT_PUBLIC_API_BASE unset, API_BASE falls back to "" (same-
   // origin), browser fetches /api/policies/packs which lands on Next.js,
   // which rewrites to http://127.0.0.1:8000/api/policies/packs internally.
+
+  // Phase-13 hosting fix: Replit's deployment runs `next dev` (HMR enabled),
+  // which blocks cross-origin requests to /_next/* resources by default.
+  // The Replit-published domain must be explicitly allowed or the dashboard
+  // logs spam "Blocked cross-origin request" and dev-mode client features
+  // (Run Demo replay, etc.) silently fail. Add any future hosting domains
+  // here. List entries are exact-match — wildcards not supported by Next.js.
+  allowedDevOrigins: [
+    "polaris--lucaslootan.replit.app",
+  ],
+
   async rewrites() {
     return [
       { source: "/api/:path*", destination: "http://127.0.0.1:8000/api/:path*" },
