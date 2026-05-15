@@ -86,14 +86,22 @@ class RedTeam:
     async def fire(self, probe: Probe) -> ProbeResult:
         # Phase-12 fix: LT may be mid-reload when this probe lands (the consent
         # gate stretched the reload window from ~50ms to ~3s, exposing this
-        # latent race). Retry connection-class failures briefly so a benign
+        # latent race). Retry transport-level failures briefly so a benign
         # reload doesn't mask as an ERROR verdict and tank coverage metrics.
-        # 3 attempts × 0.5/1.0/1.5s = ~3s cumulative — matches the typical LT
-        # reload window; longer outages correctly surface as ERROR.
+        #
+        # 4 attempts at t=0,1,2,3s (1.0s waits between) — final attempt lands
+        # right at the typical LT reload completion window. Longer outages
+        # correctly surface as ERROR after t=3s + httpx's own 60s read timeout.
+        #
+        # Round-3 reviewer fix: catch httpx.TransportError (the common base)
+        # instead of only ConnectError + RemoteProtocolError. Sibling failures
+        # ConnectTimeout / ReadError / WriteError / PoolTimeout — any of which
+        # the shim socket can produce during reload — were bubbling uncaught
+        # to the closed-loop runner, crashing the entire iteration.
         async with httpx.AsyncClient(timeout=60) as c:
             last_exc: Exception | None = None
             r = None
-            for attempt in range(3):
+            for attempt in range(4):
                 try:
                     r = await c.post(
                         self._target_url,
@@ -108,10 +116,11 @@ class RedTeam:
                     )
                     last_exc = None
                     break
-                except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+                except httpx.TransportError as exc:
                     last_exc = exc
-                    log.info("redteam.fire connect retry %d: %r", attempt + 1, exc)
-                    await asyncio.sleep(0.5 * (attempt + 1))
+                    log.info("redteam.fire transport retry %d: %r", attempt + 1, exc)
+                    if attempt < 3:
+                        await asyncio.sleep(1.0)
             if r is None:
                 log.warning("redteam.fire gave up after retries: %r", last_exc)
                 return ProbeResult(probe=probe, actual_verdict="ERROR", is_gap=False)
