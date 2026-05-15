@@ -61,7 +61,21 @@ export function AuditRow({ entry }: { entry: AuditEntry }) {
         <div className="audit-row__line">
           <span><strong>declared</strong></span>
           <span>intent=<code>{entry.declared.declared_intent}</code></span>
-          <span>agent=<code>{entry.declared.agent_id}</code></span>
+          <span>
+            agent=
+            <span
+              className={
+                "agent-badge " +
+                (entry.declared.agent_id?.startsWith("sales")
+                  ? "agent-badge--sales"
+                  : entry.declared.agent_id?.startsWith("engineering")
+                  ? "agent-badge--eng"
+                  : "agent-badge--other")
+              }
+            >
+              {entry.declared.agent_id || "—"}
+            </span>
+          </span>
         </div>
       )}
       {entry.mismatches && entry.mismatches.length > 0 && (

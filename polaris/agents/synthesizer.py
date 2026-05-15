@@ -62,6 +62,11 @@ class SynthesizerGateError(RuntimeError):
 # (see SECURITY.md "Known limitations"): per-agent schema discovery from runtime audit
 # logs (declared headers observed → distilled into per-agent intent templates).
 def _default_declared_intents() -> dict[str, IntentSchema]:
+    """Phase 12 T5 (partial): two personas ship in the demo so judges see
+    'multi-agent through one firewall' in the audit feed. Per-agent VERDICTS
+    via match.agent_id is a v0.2 item — see 2026-05-15 abort note in the
+    Phase 12 plan: LT silently ignores conditions on agent_id at evaluation
+    time (it's a declared passthrough, not a DPI metadata field)."""
     return {
         "sales-ops-copilot-v1": IntentSchema(
             default_intent="communication",
@@ -75,6 +80,21 @@ def _default_declared_intents() -> dict[str, IntentSchema]:
                     intent="communication",
                     expected_paths=[],
                     expected_domains=["hooks.slack.com", "*.slack.com"],
+                ),
+            },
+        ),
+        "engineering-copilot-v1": IntentSchema(
+            default_intent="code_execution",
+            tool_intents={
+                "read_code_file": IntentSchemaTool(
+                    intent="file_io",
+                    expected_paths=["src/**", "tests/**", "examples/code_sample*.py", "/tmp/*"],
+                    expected_domains=[],
+                ),
+                "post_review_to_github": IntentSchemaTool(
+                    intent="communication",
+                    expected_paths=[],
+                    expected_domains=["api.github.com", "*.github.com"],
                 ),
             },
         ),

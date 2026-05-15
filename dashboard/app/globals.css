@@ -1126,6 +1126,31 @@ body::after {
 }
 
 /* ============================================================
+   Phase-12 T5 (partial) — per-agent badge in audit feed
+   ============================================================ */
+.agent-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.agent-badge--sales {
+  background: oklch(0.32 0.10 220 / 0.6);
+  color: var(--cyan);
+}
+.agent-badge--eng {
+  background: oklch(0.32 0.10 290 / 0.6);
+  color: var(--violet);
+}
+.agent-badge--other {
+  background: var(--bg-2);
+  color: var(--text-2);
+}
+
+/* ============================================================
    utility
    ============================================================ */
 .stack { display: flex; flex-direction: column; gap: 10px; }
