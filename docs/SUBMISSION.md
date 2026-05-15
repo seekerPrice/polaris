@@ -30,7 +30,7 @@ Polaris uses Google Gemini and Veea Lobster Trap as a closed control loop: Reade
 - **Lucas (Loo Tan Yu Heng)** — sole engineer. Lead AI engineer at Hoppi on Hotseller V5 (25+ orchestrated Gemini agents, multi-tier model routing, semantic cache invalidation, taxonomy classifier across 51 categories × 100K+ multilingual records, per-entity iterative RAG). BSc First-Class Hons Computing Science, Heriot-Watt Malaysia (CGPA 3.9). Authored a 26-entry LLM Production Anti-Pattern Registry. **Polaris's 4-agent closed loop is the same architectural pattern shipped at Hoppi, applied to compliance.** Built solo in 6 days with Claude Code as implementation co-pilot.
 
 ## Links (UPDATE BEFORE SUBMIT)
-- **GitHub repo:** https://github.com/<lucas-handle>/polaris  *(public; created via `gh repo create polaris --public --push`)*
+- **GitHub repo:** https://github.com/seekerPrice/polaris  *(public; 16 commits on `main` as of 2026-05-15)*
 - **Demo video:** <YouTube unlisted or Vimeo anyone-with-link URL>
 - **Pitch deck PDF:** <Google Drive / Dropbox / inline GitHub asset URL>
 - **Live dashboard screenshot (mid-demo):** `docs/img/demo_thumbnail.png`
