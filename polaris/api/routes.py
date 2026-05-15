@@ -72,6 +72,12 @@ router = APIRouter()
 DB_PATH = Path("./polaris.db")
 ARTIFACTS = Path("./artifacts")
 LT = LobsterTrap()
+# Phase-12 T6: pre-built policy packs anchored off this file's location so
+# uvicorn launched from anywhere still finds them.
+_BUILTIN_PACKS_DIR = Path(__file__).resolve().parents[2] / "policies" / "builtin"
+# Pack name must be a-z0-9_ only — defeats path traversal even though we
+# resolve+containment-check below as belt-and-suspenders.
+_PACK_NAME_RE = re.compile(r"^[a-z0-9_]{1,32}$")
 # Track the audit-log tail task so we can cancel before reloading Lobster Trap.
 _AUDIT_TASK: asyncio.Task | None = None
 # Serialise _redeploy across concurrent uploads — two browser tabs uploading
@@ -231,6 +237,91 @@ async def block_quarantine(entry_id: int, req: _QuarantineDecisionReq):
         "entry_id": entry_id, "decision": "BLOCK", "approver": req.approver,
     })
     return {"blocked": True}
+
+
+# Phase-12 T6: pre-built policy pack endpoints. Packs skip the Reader+Synthesizer
+# pipeline (no PDF to parse, no Gemini call) and deploy a pre-validated YAML
+# through the same consent gate. Demo insurance against PDF parse failure;
+# also matches Veea brief verbatim ("policy packs for HIPAA, SOC2, or finance").
+@router.get("/api/policies/packs")
+async def list_packs():
+    if not _BUILTIN_PACKS_DIR.exists():
+        return {"packs": []}
+    packs = []
+    for p in sorted(_BUILTIN_PACKS_DIR.glob("*.yaml")):
+        if _PACK_NAME_RE.match(p.stem):
+            packs.append({"name": p.stem, "filename": p.name})
+    return {"packs": packs}
+
+
+@router.post("/api/policies/packs/{name}/deploy")
+async def deploy_pack(name: str, bg: BackgroundTasks):
+    if not _PACK_NAME_RE.match(name):
+        raise HTTPException(400, "invalid pack name")
+    safe_path = (_BUILTIN_PACKS_DIR / f"{name}.yaml").resolve()
+    if not safe_path.is_file() or safe_path.parent != _BUILTIN_PACKS_DIR.resolve():
+        raise HTTPException(404, f"pack '{name}' not found")
+    job_id = uuid.uuid4().hex[:12]
+    job_dir = ARTIFACTS / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    pol_path = job_dir / "policy.yaml"
+    pol_path.write_text(safe_path.read_text(encoding="utf-8"))
+    await record_job(DB_PATH, job_id, f"pack:{name}", status="validated")
+    bg.add_task(_pack_deploy_pipeline, job_id, pol_path, name)
+    return {"job_id": job_id, "pack": name}
+
+
+async def _pack_deploy_pipeline(job_id: str, pol_path: Path, pack_name: str) -> None:
+    """Pack deploys skip Reader+Synthesizer but still flow through the consent
+    gate so chain-of-custody audit trail is identical to a PDF-generated job."""
+    yaml_text = pol_path.read_text(encoding="utf-8")
+    policy_sha = hashlib.sha256(yaml_text.encode("utf-8")).hexdigest()[:12]
+    await update_job(DB_PATH, job_id, policy_yaml=yaml_text, policy_sha256=policy_sha)
+    # Synthesize a no-op reader_progress so the Pipeline UI doesn't stay at "idle".
+    await BUS.publish({
+        "type": "reader_progress", "job_id": job_id, "status": "completed",
+        "n_requirements": 0,
+    })
+    await BUS.publish({
+        "type": "synthesizer_progress", "job_id": job_id, "status": "completed",
+        "passed": True, "summary": f"pre-built pack: {pack_name}",
+    })
+
+    gate = ApprovalGate(job_id, policy_sha, auto_approve_after=3.0)
+    _APPROVAL_GATES[job_id] = gate
+    await BUS.publish({
+        "type": "awaiting_approval",
+        "job_id": job_id, "policy_sha": policy_sha,
+        "n_requirements": 0, "n_rules": _count_rules(yaml_text),
+        "auto_approve_after_s": 3.0,
+    })
+    try:
+        decision = await gate.wait_for_decision()
+    finally:
+        _APPROVAL_GATES.pop(job_id, None)
+
+    await record_policy_deploy(
+        DB_PATH, job_id, policy_sha,
+        approver=decision.approver, approved=decision.approved,
+        decided_at=decision.decided_at,
+        deployed_at=decision.decided_at if decision.approved else None,
+        reason=decision.reason,
+    )
+    if not decision.approved:
+        await BUS.publish({
+            "type": "policy_rejected",
+            "job_id": job_id, "policy_sha": policy_sha,
+            "approver": decision.approver, "reason": decision.reason,
+        })
+        await update_job(DB_PATH, job_id, status="rejected")
+        return
+    await _redeploy(job_id, pol_path)
+    await BUS.publish({
+        "type": "policy_approved",
+        "job_id": job_id, "policy_sha": policy_sha,
+        "approver": decision.approver, "decided_at": decision.decided_at,
+    })
+    await BUS.publish({"type": "policy_hash", "job_id": job_id, "sha256": policy_sha})
 
 
 @router.get("/api/audit-log")

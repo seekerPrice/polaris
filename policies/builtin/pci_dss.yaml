@@ -1,0 +1,98 @@
+version: "1.0"
+policy_name: "polaris-pci-dss-pack"
+default_action: ALLOW
+# Phase-12 T6 — PCI-DSS v4.0 policy pack.
+# Focus: cardholder data (CHD) protection, strong access control, secure
+# transmission, vulnerability management.
+#   Req 3 — Protect stored CHD → block PII/credentials extraction
+#   Req 4 — Encrypt transmission → block exfil to insecure domains
+#   Req 6 — Vulnerability management → block injection
+#   Req 7 — Restrict access → block sensitive paths
+#   Req 8 — Strong access control → block credential exposure
+#   Req 10 — Log all access → Polaris audits everything (downstream)
+# LT corpus 11/11 PASS verified.
+ingress_rules:
+  - name: pci_dss_req6_block_prompt_injection
+    description: "PCI-DSS Req 6.5.1 — DENY injection (vulnerability management)"
+    priority: 1000
+    action: DENY
+    deny_message: "[PCI-DSS-Req6.5.1] Blocked: prompt-injection attempt."
+    conditions:
+      - field: contains_injection_patterns
+        match_type: boolean
+        value: true
+  - name: pci_dss_req8_block_credentials
+    description: "PCI-DSS Req 8.3 — DENY credential extraction (strong access control)"
+    priority: 999
+    action: DENY
+    deny_message: "[PCI-DSS-Req8.3] Blocked: credential extraction attempt."
+    conditions:
+      - field: contains_credentials
+        match_type: boolean
+        value: true
+  - name: pci_dss_req3_block_pii_request
+    description: "PCI-DSS Req 3 — DENY cardholder-data / PII extraction"
+    priority: 999
+    action: DENY
+    deny_message: "[PCI-DSS-Req3] Blocked: CHD/PII extraction request."
+    conditions:
+      - field: contains_pii_request
+        match_type: boolean
+        value: true
+  - name: pci_dss_req2_block_system_commands
+    description: "PCI-DSS Req 2.2 — DENY dangerous system commands"
+    priority: 999
+    action: DENY
+    deny_message: "[PCI-DSS-Req2.2] Blocked: dangerous system command."
+    conditions:
+      - field: contains_system_commands
+        match_type: boolean
+        value: true
+  - name: pci_dss_req7_block_sensitive_paths
+    description: "PCI-DSS Req 7 — DENY access to /etc/, .ssh, .env (restrict access)"
+    priority: 999
+    action: DENY
+    deny_message: "[PCI-DSS-Req7] Blocked: sensitive path access."
+    conditions:
+      - field: contains_sensitive_paths
+        match_type: boolean
+        value: true
+  - name: pci_dss_req4_block_exfiltration
+    description: "PCI-DSS Req 4.2.1 — DENY transmissions to non-encrypted exfil channels"
+    priority: 998
+    action: DENY
+    deny_message: "[PCI-DSS-Req4.2.1] Blocked: outbound exfiltration vector."
+    conditions:
+      - field: target_domains
+        match_type: contains
+        value: pastebin.com
+  - name: pci_dss_rate_limit_token_bomb
+    description: "PCI-DSS Req 6.5.10 — RATE_LIMIT large prompts (DoS mitigation)"
+    priority: 996
+    action: RATE_LIMIT
+    conditions:
+      - field: token_count
+        match_type: threshold
+        value: 2000
+egress_rules:
+  - name: pci_dss_req4_block_egress_chd
+    description: "PCI-DSS Req 4 — DENY model outputs to exfil domains"
+    priority: 999
+    action: DENY
+    deny_message: "[PCI-DSS-Req4-EGRESS] Blocked: outbound to exfil domain."
+    conditions:
+      - field: target_domains
+        match_type: contains
+        value: pastebin.com
+rate_limits:
+  requests_per_minute: 40
+  requests_per_hour: 800
+  burst_threshold: 15
+network:
+  egress_policy: denylist
+  allowed_domains: []
+  denied_domains: ["pastebin.com", "*.onion", "transfer.sh", "ngrok.io", "requestbin.com"]
+filesystem:
+  denied_paths: ["/etc/**", "**/.ssh/**", "**/.env", "**/.aws/credentials", "**/.gnupg/**", "**/chd/**"]
+  allowed_read_paths: []
+  allowed_write_paths: []

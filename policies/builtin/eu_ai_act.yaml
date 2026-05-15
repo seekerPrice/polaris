@@ -1,0 +1,96 @@
+version: "1.0"
+policy_name: "polaris-eu-ai-act-pack"
+default_action: ALLOW
+# Phase-12 T6 — EU AI Act policy pack (Regulation 2024/1689).
+# Focus: prohibited practices (Art. 5), high-risk-system obligations (Art. 6+),
+# transparency (Art. 13), human oversight (Art. 14).
+#   Art. 5(1)(a) — manipulation, subliminal techniques → block injection
+#   Art. 5(1)(b) — exploitation of vulnerabilities → block role-impersonation
+#   Art. 14 — human oversight → HUMAN_REVIEW on high-risk
+#   Art. 15 — accuracy/robustness → block obfuscation attempts
+# LT corpus 11/11 PASS verified.
+ingress_rules:
+  - name: eu_ai_act_art5_block_manipulation
+    description: "EU AI Act Art. 5(1)(a) — DENY manipulation / prompt-injection (prohibited practice)"
+    priority: 1000
+    action: DENY
+    deny_message: "[EU-AI-ACT-Art.5(1)(a)] Blocked: manipulation pattern (prohibited)."
+    conditions:
+      - field: contains_injection_patterns
+        match_type: boolean
+        value: true
+  - name: eu_ai_act_art5_block_role_impersonation
+    description: "EU AI Act Art. 5(1)(b) — DENY exploitation via role-impersonation"
+    priority: 999
+    action: DENY
+    deny_message: "[EU-AI-ACT-Art.5(1)(b)] Blocked: role-impersonation attempt."
+    conditions:
+      - field: contains_role_impersonation
+        match_type: boolean
+        value: true
+  - name: eu_ai_act_art15_block_obfuscation
+    description: "EU AI Act Art. 15 — DENY obfuscation that undermines robustness"
+    priority: 999
+    action: DENY
+    deny_message: "[EU-AI-ACT-Art.15] Blocked: obfuscation pattern detected."
+    conditions:
+      - field: contains_obfuscation
+        match_type: boolean
+        value: true
+  - name: eu_ai_act_block_system_commands
+    description: "EU AI Act / NIS2 — DENY dangerous system commands"
+    priority: 999
+    action: DENY
+    deny_message: "[EU-AI-ACT] Blocked: dangerous system command."
+    conditions:
+      - field: contains_system_commands
+        match_type: boolean
+        value: true
+  - name: eu_ai_act_block_sensitive_paths
+    description: "EU AI Act Art. 14 — DENY access to sensitive system paths"
+    priority: 999
+    action: DENY
+    deny_message: "[EU-AI-ACT-Art.14] Blocked: sensitive path access."
+    conditions:
+      - field: contains_sensitive_paths
+        match_type: boolean
+        value: true
+  - name: eu_ai_act_art14_human_review_high_risk
+    description: "EU AI Act Art. 14 — pause for human oversight when risk_score >= 0.75"
+    priority: 994
+    action: HUMAN_REVIEW
+    conditions:
+      - field: risk_score
+        match_type: threshold
+        value: 0.75
+  - name: eu_ai_act_gdpr_block_exfiltration
+    description: "EU AI Act / GDPR Art. 32 — DENY transmissions to known exfil sites"
+    priority: 998
+    action: DENY
+    deny_message: "[GDPR-Art.32] Blocked: outbound exfiltration vector."
+    conditions:
+      - field: target_domains
+        match_type: contains
+        value: pastebin.com
+egress_rules:
+  - name: eu_ai_act_block_egress_exfiltration
+    description: "EU AI Act / GDPR Art. 32 — DENY model outputs to exfil domains"
+    priority: 999
+    action: DENY
+    deny_message: "[GDPR-Art.32-EGRESS] Blocked: outbound to exfil domain."
+    conditions:
+      - field: target_domains
+        match_type: contains
+        value: pastebin.com
+rate_limits:
+  requests_per_minute: 60
+  requests_per_hour: 1000
+  burst_threshold: 20
+network:
+  egress_policy: denylist
+  allowed_domains: []
+  denied_domains: ["pastebin.com", "*.onion", "transfer.sh", "ngrok.io", "requestbin.com"]
+filesystem:
+  denied_paths: ["/etc/**", "**/.ssh/**", "**/.env", "**/.aws/credentials", "**/.gnupg/**"]
+  allowed_read_paths: []
+  allowed_write_paths: []

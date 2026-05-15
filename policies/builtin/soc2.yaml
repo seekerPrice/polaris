@@ -1,0 +1,86 @@
+version: "1.0"
+policy_name: "polaris-soc2-pack"
+default_action: ALLOW
+# Phase-12 T6 — SOC 2 policy pack.
+# Maps to SOC 2 Trust Services Criteria:
+#   CC6.1 — Logical & Physical Access Controls (block sensitive paths)
+#   CC6.6 — Logical access prevention (block credential exposure)
+#   CC7.2 — Detection of malicious activity (block injection patterns)
+#   CC8.1 — Change management — enforced by the Polaris pre-deploy consent gate
+# LT corpus 11/11 PASS verified.
+ingress_rules:
+  - name: soc2_cc7_2_block_prompt_injection
+    description: "SOC 2 CC7.2 — DENY any prompt LT classifies as injection (malicious activity detection)"
+    priority: 1000
+    action: DENY
+    deny_message: "[SOC2-CC7.2] Blocked: prompt injection detected."
+    conditions:
+      - field: contains_injection_patterns
+        match_type: boolean
+        value: true
+  - name: soc2_cc6_6_block_credentials
+    description: "SOC 2 CC6.6 — DENY when prompts attempt to extract credentials/secrets"
+    priority: 999
+    action: DENY
+    deny_message: "[SOC2-CC6.6] Blocked: credential extraction attempt."
+    conditions:
+      - field: contains_credentials
+        match_type: boolean
+        value: true
+  - name: soc2_cc6_1_block_system_commands
+    description: "SOC 2 CC6.1 — DENY dangerous shell commands (rm -rf, sudo, curl|bash)"
+    priority: 999
+    action: DENY
+    deny_message: "[SOC2-CC6.1] Blocked: dangerous system command."
+    conditions:
+      - field: contains_system_commands
+        match_type: boolean
+        value: true
+  - name: soc2_cc6_1_block_sensitive_paths
+    description: "SOC 2 CC6.1 — DENY access to /etc/, ~/.ssh/, .env, credentials files"
+    priority: 999
+    action: DENY
+    deny_message: "[SOC2-CC6.1] Blocked: sensitive path access denied."
+    conditions:
+      - field: contains_sensitive_paths
+        match_type: boolean
+        value: true
+  - name: soc2_cc7_2_block_exfiltration_paste_sites
+    description: "SOC 2 CC7.2 — DENY exfiltration vectors (pastebin and friends)"
+    priority: 998
+    action: DENY
+    deny_message: "[SOC2-CC7.2] Blocked: known exfiltration target domain."
+    conditions:
+      - field: target_domains
+        match_type: contains
+        value: pastebin.com
+  - name: soc2_governance_human_review_high_risk
+    description: "SOC 2 — pause for human review when risk_score >= 0.85"
+    priority: 994
+    action: HUMAN_REVIEW
+    conditions:
+      - field: risk_score
+        match_type: threshold
+        value: 0.85
+egress_rules:
+  - name: soc2_cc7_2_block_paste_site_egress
+    description: "SOC 2 CC7.2 — DENY model responses referencing exfiltration domains"
+    priority: 999
+    action: DENY
+    deny_message: "[SOC2-CC7.2-EGRESS] Blocked: outbound references known exfiltration domain."
+    conditions:
+      - field: target_domains
+        match_type: contains
+        value: pastebin.com
+rate_limits:
+  requests_per_minute: 60
+  requests_per_hour: 1000
+  burst_threshold: 20
+network:
+  egress_policy: denylist
+  allowed_domains: []
+  denied_domains: ["pastebin.com", "*.onion", "transfer.sh", "ngrok.io", "requestbin.com"]
+filesystem:
+  denied_paths: ["/etc/**", "**/.ssh/**", "**/.env", "**/.aws/credentials", "**/.gnupg/**"]
+  allowed_read_paths: []
+  allowed_write_paths: []

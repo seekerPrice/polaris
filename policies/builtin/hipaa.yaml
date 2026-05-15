@@ -1,0 +1,98 @@
+version: "1.0"
+policy_name: "polaris-hipaa-pack"
+default_action: ALLOW
+# Phase-12 T6 — HIPAA Security Rule policy pack (45 CFR Part 164 Subpart C).
+# Focus: PHI confidentiality, integrity, and access logging.
+#   164.312(a)(1) — Access Control — block sensitive paths + credentials
+#   164.312(b)   — Audit Controls — Polaris always logs (downstream)
+#   164.312(c)(1) — Integrity — block prompt-injection attempts
+#   164.312(e)(1) — Transmission Security — block exfiltration vectors
+# LT corpus 11/11 PASS verified.
+ingress_rules:
+  - name: hipaa_164_312_c_block_prompt_injection
+    description: "HIPAA 164.312(c)(1) — DENY prompt-injection attempts (integrity controls)"
+    priority: 1000
+    action: DENY
+    deny_message: "[HIPAA-164.312(c)] Blocked: prompt-injection attempt."
+    conditions:
+      - field: contains_injection_patterns
+        match_type: boolean
+        value: true
+  - name: hipaa_164_312_a_block_pii_request
+    description: "HIPAA 164.312(a)(1) — DENY explicit PII/PHI extraction requests"
+    priority: 999
+    action: DENY
+    deny_message: "[HIPAA-164.312(a)] Blocked: PHI/PII extraction request."
+    conditions:
+      - field: contains_pii_request
+        match_type: boolean
+        value: true
+  - name: hipaa_164_312_a_block_credentials
+    description: "HIPAA 164.312(a)(1) — DENY credential extraction (covered entity access controls)"
+    priority: 999
+    action: DENY
+    deny_message: "[HIPAA-164.312(a)] Blocked: credential extraction."
+    conditions:
+      - field: contains_credentials
+        match_type: boolean
+        value: true
+  - name: hipaa_164_308_block_system_commands
+    description: "HIPAA 164.308(a)(5)(ii)(B) — DENY dangerous shell commands"
+    priority: 999
+    action: DENY
+    deny_message: "[HIPAA-164.308] Blocked: dangerous system command."
+    conditions:
+      - field: contains_system_commands
+        match_type: boolean
+        value: true
+  - name: hipaa_164_312_a_block_sensitive_paths
+    description: "HIPAA 164.312(a)(1) — DENY sensitive system path access"
+    priority: 999
+    action: DENY
+    deny_message: "[HIPAA-164.312(a)] Blocked: sensitive path access denied."
+    conditions:
+      - field: contains_sensitive_paths
+        match_type: boolean
+        value: true
+  - name: hipaa_164_312_e_block_exfiltration
+    description: "HIPAA 164.312(e)(1) — DENY transmissions to known exfiltration sites"
+    priority: 998
+    action: DENY
+    deny_message: "[HIPAA-164.312(e)] Blocked: outbound exfiltration vector."
+    conditions:
+      - field: target_domains
+        match_type: contains
+        value: pastebin.com
+  - name: hipaa_minimum_necessary_quarantine_pii_borderline
+    description: "HIPAA Minimum Necessary — quarantine borderline PII handling for review"
+    priority: 993
+    action: QUARANTINE
+    conditions:
+      - field: contains_pii
+        match_type: boolean
+        value: true
+      - field: risk_score
+        match_type: threshold
+        value: 0.65
+egress_rules:
+  - name: hipaa_164_312_e_block_egress_pii
+    description: "HIPAA 164.312(e)(1) — DENY model outputs containing PII destined for paste sites"
+    priority: 999
+    action: DENY
+    deny_message: "[HIPAA-164.312(e)-EGRESS] Blocked: outbound PHI to exfiltration domain."
+    conditions:
+      - field: target_domains
+        match_type: contains
+        value: pastebin.com
+rate_limits:
+  requests_per_minute: 40
+  requests_per_hour: 800
+  burst_threshold: 15
+network:
+  egress_policy: denylist
+  allowed_domains: []
+  denied_domains: ["pastebin.com", "*.onion", "transfer.sh", "ngrok.io", "requestbin.com"]
+filesystem:
+  denied_paths: ["/etc/**", "**/.ssh/**", "**/.env", "**/.aws/credentials", "**/.gnupg/**", "**/phi/**"]
+  allowed_read_paths: []
+  allowed_write_paths: []

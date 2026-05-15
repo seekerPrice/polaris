@@ -30,6 +30,7 @@ import { SummaryList } from "@/components/polaris/SummaryList";
 import { ComplianceReport } from "@/components/polaris/ComplianceReport";
 import { ApprovalGate } from "@/components/polaris/ApprovalGate";
 import { QuarantineQueue } from "@/components/polaris/QuarantineQueue";
+import { PackPicker } from "@/components/polaris/PackPicker";
 import { YamlEditor } from "@/components/polaris/YamlEditor";
 import { AuditRow } from "@/components/polaris/AuditRow";
 import { ProbeRow } from "@/components/polaris/ProbeRow";
@@ -303,6 +304,10 @@ export default function Page() {
                 onDragLeave={onDragLeave}
                 onPickFile={onPickFile}
                 onLoadDemo={onLoadDemo}
+              />
+              <PackPicker
+                onDeployed={(jobId) => dispatch({ type: "set_job", jobId })}
+                disabled={replaying}
               />
               <SummaryList
                 reader={state.reader}
