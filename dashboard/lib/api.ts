@@ -1,4 +1,8 @@
-export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+// Phase-13 hosting prep: default to same-origin ("") so the Next.js rewrite
+// proxy in next.config.ts handles /api/* and /v1/* routing on hosts (Replit,
+// Vercel, etc.) where backend ports are not externally reachable. Local dev
+// still hits localhost:8000 via .env.local (NEXT_PUBLIC_API_BASE=http://localhost:8000).
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
 export async function uploadPolicy(file: File): Promise<{ job_id: string }> {
   const fd = new FormData();
