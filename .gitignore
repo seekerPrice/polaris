@@ -14,3 +14,6 @@ out/
 dist/
 *.log
 .DS_Store
+# Deep-check audit scratch: large PNG screenshots + per-run markdown reports.
+# Regenerated on every audit run, not useful long-term.
+.deep-check/
