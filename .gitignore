@@ -17,3 +17,15 @@ dist/
 # Deep-check audit scratch: large PNG screenshots + per-run markdown reports.
 # Regenerated on every audit run, not useful long-term.
 .deep-check/
+
+# Pitch template (Lucas's local copy; ours is the generated docs/PITCH_DECK.pptx).
+VC pitch deck.pdf
+
+# Office / Keynote lock files.
+~$*.pptx
+~$*.docx
+~$*.xlsx
+
+# Keynote auto-duplicates (PITCH_DECK-2.pptx etc.). Source of truth is PITCH_DECK.pptx.
+docs/PITCH_DECK-[0-9]*.pptx
+docs/PITCH_DECK-[0-9]*.pdf
