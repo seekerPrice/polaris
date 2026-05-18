@@ -1,0 +1,175 @@
+1
+00:00:00,000 --> 00:00:02,824
+Enterprises have AI agents in production.
+
+2
+00:00:02,824 --> 00:00:05,441
+They have compliance policies in PDFs.
+
+3
+00:00:05,441 --> 00:00:07,783
+They have nothing connecting them.
+
+4
+00:00:07,783 --> 00:00:13,363
+Hand-writing firewall rules to bridge that gap takes three weeks of legal review.
+
+5
+00:00:13,363 --> 00:00:19,149
+Polaris compiles a SOC 2 PDF into a deployed Lobster Trap firewall in sixty seconds.
+
+6
+00:00:19,149 --> 00:00:19,562
+Watch.
+
+7
+00:00:19,562 --> 00:00:22,662
+Here's a real SOC 2 PDF dropped into Polaris.
+
+8
+00:00:22,662 --> 00:00:30,514
+Two Gemini agents — Reader extracts requirements, Synthesizer streams out a Lobster Trap policy YAML in real time.
+
+9
+00:00:30,514 --> 00:00:34,234
+Every rule is mapped to a specific compliance control.
+
+10
+00:00:34,234 --> 00:00:38,711
+Synthesizer validates against the eleven-test adversarial corpus.
+
+11
+00:00:38,711 --> 00:00:41,466
+SHA-256 stamped for audit defensibility.
+
+12
+00:00:41,466 --> 00:00:46,426
+The consent gate gives operators a SOC 2 CC8.1 change-management moment.
+
+13
+00:00:46,426 --> 00:00:47,734
+Approve and deploy.
+
+14
+00:00:47,734 --> 00:00:51,729
+Lobster Trap is live, inline between the agent and Gemini.
+
+15
+00:00:51,729 --> 00:00:55,174
+Now an agent hits an exfiltration prompt — denied.
+
+16
+00:00:55,174 --> 00:00:57,998
+A base64-obfuscated retry — that's a gap.
+
+17
+00:00:57,998 --> 00:00:59,238
+Red Team finds it.
+
+18
+00:00:59,238 --> 00:01:02,337
+Synthesizer regenerates with the new pattern.
+
+19
+00:01:02,337 --> 00:01:04,128
+Same prompt — now blocked.
+
+20
+00:01:04,128 --> 00:01:04,955
+Closed loop.
+
+21
+00:01:04,955 --> 00:01:11,292
+Compliance report renders automatically, mapped to four SOC 2 and OWASP LLM Top 10 controls.
+
+22
+00:01:11,292 --> 00:01:16,802
+Audit-defensible chain of custody from the original PDF to every blocked attack.
+
+23
+00:01:16,802 --> 00:01:20,729
+Three weeks of legal review, compressed to sixty seconds.
+
+24
+00:01:20,729 --> 00:01:30,510
+Enterprise AI Trust, Risk, and Security Management is a seven point four billion dollar market by 2030, expanding twenty-one percent per year.
+
+25
+00:01:30,510 --> 00:01:34,712
+Polaris's serviceable wedge: the compliance-to-firewall step.
+
+26
+00:01:34,712 --> 00:01:36,020
+Today it is manual.
+
+27
+00:01:36,020 --> 00:01:43,253
+Microsoft Purview AI Hub provides policy templates and audit logs, but no inline blocking on LLM outputs.
+
+28
+00:01:43,253 --> 00:01:50,554
+Lakera, F5 AI Guardrails, and Cisco AI Defense do runtime firewalling — but every rule is written by hand.
+
+29
+00:01:50,554 --> 00:01:54,412
+None of them auto-generate policy from a compliance PDF.
+
+30
+00:01:54,412 --> 00:02:01,093
+Polaris is the only end-to-end loop: PDF in, deployed, verified, regenerated when gaps are found.
+
+31
+00:02:01,093 --> 00:02:03,986
+Six of six Lobster Trap actions exercised.
+
+32
+00:02:03,986 --> 00:02:09,772
+Four built-in policy packs ready to deploy for SOC 2, HIPAA, EU AI Act, and PCI-DSS.
+
+33
+00:02:09,772 --> 00:02:12,183
+Closed-loop self-patching red team.
+
+34
+00:02:12,183 --> 00:02:18,451
+Unit economics: compliance counsel costs fifteen to forty-five thousand dollars per policy.
+
+35
+00:02:18,451 --> 00:02:23,273
+Polaris generates the same artifact for half a cent of Gemini compute.
+
+36
+00:02:23,273 --> 00:02:27,819
+Three million times cost compression on the policy authoring step.
+
+37
+00:02:27,819 --> 00:02:32,985
+Roadmap: drift monitoring, multi-tenant SaaS, per-agent permission systems.
+
+38
+00:02:32,985 --> 00:02:34,570
+Polaris is live online.
+
+39
+00:02:34,570 --> 00:02:36,292
+Drop your compliance PDF.
+
+40
+00:02:36,292 --> 00:02:38,082
+Watch the firewall deploy.
+
+41
+00:02:38,082 --> 00:02:40,975
+Built for Veea Trust Track at TechEx 2026.
+
+42
+00:02:40,975 --> 00:02:42,698
+Built solo in seven days.
+
+43
+00:02:42,698 --> 00:02:44,488
+AI guardrails at AI speed.
+
+44
+00:02:44,488 --> 00:02:45,040
+Polaris.

@@ -1,0 +1,25 @@
+Enterprises have AI agents in production. They have compliance policies in PDFs. They have nothing connecting them. Hand-writing firewall rules to bridge that gap takes three weeks of legal review. Polaris compiles a SOC 2 PDF into a deployed Lobster Trap firewall in sixty seconds. Watch.
+
+Here's a real SOC 2 PDF dropped into Polaris. Two Gemini agents — Reader extracts requirements, Synthesizer streams out a Lobster Trap policy YAML in real time. Every rule is mapped to a specific compliance control. Synthesizer validates against the eleven-test adversarial corpus. SHA-256 stamped for audit defensibility.
+
+The consent gate gives operators a SOC 2 CC8.1 change-management moment. Approve and deploy. Lobster Trap is live, inline between the agent and Gemini.
+
+Now an agent hits an exfiltration prompt — denied. A base64-obfuscated retry — that's a gap. Red Team finds it. Synthesizer regenerates with the new pattern. Same prompt — now blocked. Closed loop.
+
+Compliance report renders automatically, mapped to four SOC 2 and OWASP LLM Top 10 controls. Audit-defensible chain of custody from the original PDF to every blocked attack.
+
+Three weeks of legal review, compressed to sixty seconds.
+
+Enterprise AI Trust, Risk, and Security Management is a seven point four billion dollar market by 2030, expanding twenty-one percent per year. Polaris's serviceable wedge: the compliance-to-firewall step. Today it is manual.
+
+Microsoft Purview AI Hub provides policy templates and audit logs, but no inline blocking on LLM outputs. Lakera, F5 AI Guardrails, and Cisco AI Defense do runtime firewalling — but every rule is written by hand. None of them auto-generate policy from a compliance PDF.
+
+Polaris is the only end-to-end loop: PDF in, deployed, verified, regenerated when gaps are found. Six of six Lobster Trap actions exercised. Four built-in policy packs ready to deploy for SOC 2, HIPAA, EU AI Act, and PCI-DSS. Closed-loop self-patching red team.
+
+Unit economics: compliance counsel costs fifteen to forty-five thousand dollars per policy. Polaris generates the same artifact for half a cent of Gemini compute. Three million times cost compression on the policy authoring step.
+
+Roadmap: drift monitoring, multi-tenant SaaS, per-agent permission systems.
+
+Polaris is live online. Drop your compliance PDF. Watch the firewall deploy. Built for Veea Trust Track at TechEx 2026. Built solo in seven days. AI guardrails at AI speed.
+
+Polaris.
