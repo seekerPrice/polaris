@@ -6,7 +6,11 @@ The consent gate gives operators a SOC 2 CC8.1 change-management moment. Approve
 
 Now an agent hits an exfiltration prompt — denied. A base64-obfuscated retry — that's a gap. Red Team finds it. Synthesizer regenerates with the new pattern. Same prompt — now blocked. Closed loop.
 
+Some prompts aren't clear DENY — borderline credentials, ambiguous PII. Those route to a QUARANTINE queue for operator release or block. Six of six Lobster Trap actions, exercised in one demo.
+
 Compliance report renders automatically, mapped to four SOC 2 and OWASP LLM Top 10 controls. Audit-defensible chain of custody from the original PDF to every blocked attack.
+
+Multiple agents share the same firewall — Sales Ops, Engineering Copilot — each tagged in the audit log. Or skip the upload entirely. Pre-built packs for SOC 2, HIPAA, EU AI Act, and PCI-DSS deploy in seconds.
 
 Three weeks of legal review, compressed to sixty seconds.
 
